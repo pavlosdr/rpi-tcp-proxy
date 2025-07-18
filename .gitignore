@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Systémové soubory
+*.log
+*.bak
+*.swp
+.DS_Store
+
+# Env konfigurace s citlivými údaji
+.env
+
+# Archiv zálohy
+rpi-admin-ui-*.tar.gz
+
+# Instalační skript zálohy
+install_from_archive.sh
