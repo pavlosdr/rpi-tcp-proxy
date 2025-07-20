@@ -1,3 +1,12 @@
 [Unit]
-Description=MQTT Reporting
-...
+Description=MQTT connectivity reporter
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/tools/mqtt_report.py
+WorkingDirectory=/opt/rpi-admin-ui
+Restart=always
+User=pi
+
+[Install]
+WantedBy=multi-user.target
