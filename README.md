@@ -13,7 +13,7 @@ Určeno pro domácí automatizaci a integraci s Home Assistant. Součástí je t
 1. **Stažení a spuštění instalačního skriptu**:
 
 ```bash
-curl -fsSL https://example.com/download/Rpi_Admin_Ui_Setup.sh -o Rpi_Admin_Ui_Setup.sh
+curl -fsSL https://github.com/pavlosdr/rpi-tcp-proxy/blob/master/download/Rpi_Admin_Ui_Setup.sh -o Rpi_Admin_Ui_Setup.sh
 chmod +x Rpi_Admin_Ui_Setup.sh
 ./Rpi_Admin_Ui_Setup.sh
 ```
@@ -64,6 +64,23 @@ Skript vše provede automaticky — staré soubory odstraní a nasadí nové.
 
 ---
 
+## Sestavení ZIP balíčku z Git repozitáře (Windows)
+
+V adresáři tools\ spusť skript:
+```
+generate_deploy_zip_from_git.bat
+```
+
+Tento skript provede:
+
+- Vytvoření složky `C:\Git\rpi-tcp-proxy\download` (pokud neexistuje)
+- Vygenerování archivu `rpi-tcp-proxy-no-git.zip` bez pomocných souborů (`.git`, `tools/`, `download/`, atd.)
+- Pokud ve složce zip již existoval, smaže jej a nahradí novým
+
+ZIP můžeš následně nahrát na vlastní web a použít pro instalaci přes `Rpi_Admin_Ui_Setup.sh`.
+
+---
+
 ## Struktura projektu
 
 ```
@@ -81,7 +98,11 @@ rpi-tcp-proxy/
 │   ├── rpi-admin-ui.service
 │   ├── modbus_tcp_proxy.service
 │   └── rpi-mqtt-report.service
-└── README.md
+├── README.md
+└── tools/
+    ├── generate_deploy_zip_from_git.bat
+    └── generate_deploy_zip_from_git.ps1
+
 ```
 
 ---

@@ -4,7 +4,7 @@
 APP_DIR="/opt/rpi-admin-ui"
 SERVICE_NAME="rpi-admin-ui"
 ARCHIVE_NAME="rpi-tcp-proxy-no-git.zip"
-ARCHIVE_URL="https://example.com/download/$ARCHIVE_NAME"
+ARCHIVE_URL="https://github.com/pavlosdr/rpi-tcp-proxy/blob/master/download/$ARCHIVE_NAME"
 TEMP_DIR="$HOME/tmp_rpi_ui_setup"
 
 # ==== KROK 1: Závislosti ====
