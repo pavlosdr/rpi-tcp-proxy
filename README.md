@@ -69,16 +69,18 @@ Skript vše provede automaticky — staré soubory odstraní a nasadí nové.
 ```
 rpi-tcp-proxy/
 ├── app.py
+├── download/
+│   ├── Rpi_Admin_Ui_Setup.sh
+│   └── rpi-tcp-proxy-no-git.zip
 ├── modbus_tcp_proxy.py
 ├── .env
+├── requirements.txt
 ├── templates/
 │   └── env.html
 ├── systemd/
 │   ├── rpi-admin-ui.service
 │   ├── modbus_tcp_proxy.service
 │   └── rpi-mqtt-report.service
-├── install_from_archive.sh
-├── Rpi_Admin_Ui_Setup.sh
 └── README.md
 ```
 
