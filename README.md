@@ -13,12 +13,10 @@ Určeno pro domácí automatizaci a integraci s Home Assistant. Součástí je t
 1. **Stažení a spuštění instalačního skriptu**:
 
 ```bash
-curl -fsSL https://github.com/pavlosdr/rpi-tcp-proxy/blob/master/download/Rpi_Admin_Ui_Setup.sh -o Rpi_Admin_Ui_Setup.sh
+curl -fsSL https://raw.githubusercontent.com/pavlosdr/rpi-tcp-proxy/master/download/Rpi_Admin_Ui_Setup.sh -o Rpi_Admin_Ui_Setup.sh
 chmod +x Rpi_Admin_Ui_Setup.sh
 ./Rpi_Admin_Ui_Setup.sh
 ```
-
-> Nahraď `example.com` vlastní adresou s instalačním ZIP souborem.
 
 2. **Co skript provádí**:
 
