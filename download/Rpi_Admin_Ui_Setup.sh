@@ -4,7 +4,7 @@
 APP_DIR="/opt/rpi-admin-ui"
 SERVICE_NAME="rpi-admin-ui"
 ARCHIVE_NAME="rpi-tcp-proxy-no-git.zip"
-ARCHIVE_URL="https://github.com/pavlosdr/rpi-tcp-proxy/blob/master/download/$ARCHIVE_NAME"
+ARCHIVE_URL="https://raw.githubusercontent.com/pavlosdr/rpi-tcp-proxy/master/download/$ARCHIVE_NAME"
 TEMP_DIR="$HOME/tmp_rpi_ui_setup"
 
 # ==== KROK 1: Závislosti ====
@@ -28,7 +28,7 @@ sudo chown -R $USER:$USER "$APP_DIR"
 
 # ==== KROK 4: Instalace prostředí ====
 echo "[4/6] Instalace Python závislostí..."
-pip3 install -r "$APP_DIR/requirements.txt"
+sudo pip3 install -r "$APP_DIR/requirements.txt"
 
 # ==== KROK 5: Aktivace systemd služeb ====
 echo "[5/6] Aktivace systemd služeb..."
