@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Service Status</title>
+</head>
+<body>
+  <h2>Služby na Raspberry Pi</h2>
+  <table border="1" cellpadding="8">
+    <tr><th>Služba</th><th>Stav</th><th>Akce</th></tr>
+    <tr>
+      <td>Modbus TCP Proxy</td>
+      <td>{{ statuses.modbus }}</td>
+      <td>
+        <form method="post" action="/restart/modbus"><button type="submit">Restart</button></form>
+      </td>
+    </tr>
+    <tr>
+      <td>MQTT Report</td>
+      <td>{{ statuses.mqtt }}</td>
+      <td>
+        <form method="post" action="/restart/mqtt"><button type="submit">Restart</button></form>
+      </td>
+    </tr>
+    <tr>
+      <td>Admin UI</td>
+      <td>{{ statuses.ui }}</td>
+      <td>
+        <form method="post" action="/restart/ui"><button type="submit">Restart</button></form>
+      </td>
+    </tr>
+  </table>
+  <br>
+  <a href="/env">Změnit .env proměnné</a>
+</body>
+</html>
