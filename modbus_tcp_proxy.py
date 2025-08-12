@@ -2,11 +2,14 @@ import socket
 import threading
 import os
 from dotenv import load_dotenv
-load_dotenv(dotenv_path="./.env")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path=ENV_PATH)
 
 
-LISTEN_IP = "0.0.0.0"  # ← eth0 IP adresa RPi v síti s Home Assistantem
-LISTEN_PORT = 502
+LISTEN_IP = os.getenv("LISTEN_IP", "0.0.0.0")
+LISTEN_PORT = int(os.getenv("LISTEN_PORT", "502"))
 
 TARGET_IP = os.getenv("PROXY_TARGET_IP", "10.10.100.253") # ← IP měniče přes wlan0
 TARGET_PORT = int(os.getenv("PROXY_TARGET_PORT", "502"))

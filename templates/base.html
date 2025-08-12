@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <title>{{ title or 'RPi Admin UI' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div id="flashes">
+    {% for category, message in messages %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endwith %}
+  <header>
+    <h1>RPi Admin UI</h1>
+    {% if session.get('authenticated') %}
+      <nav>
+        <a href="{{ url_for('index') }}">Dashboard</a> |
+        <a href="{{ url_for('show_env') }}">Nastavení (.env)</a> |
+        <a href="{{ url_for('logout') }}">Odhlásit</a> |
+        <a href="{{ url_for('network') }}">Síťové testy</a>
+      </nav>
+    {% endif %}
+    <hr>
+  </header>
+
+  {% block content %}{% endblock %}
+</body>
+</html>

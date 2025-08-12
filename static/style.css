@@ -1,0 +1,9 @@
+body { font-family: Arial, sans-serif; background: #f6f6f6; padding: 16px; }
+table { border-collapse: collapse; background: #fff; }
+td, th { border: 1px solid #ddd; padding: 6px 10px; }
+h1, h2 { margin-bottom: 8px; }
+#flashes .flash { padding: 8px; margin-bottom: 6px; border-radius: 4px; }
+.flash.success { background: #e1f7e1; border: 1px solid #7cd67c; }
+.flash.error { background: #fbdcdc; border: 1px solid #e77; }
+nav a { margin-right: 8px; }
+pre { white-space: pre-wrap; }

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Systémové informace</h2>
+<ul>
+  {% for k, v in info.items() %}
+    <li><b>{{ k }}:</b> <pre style="display:inline">{{ v }}</pre></li>
+  {% endfor %}
+</ul>
+
+<h2>Služby</h2>
+<table>
+  <tr><th>Název</th><th>Stav</th><th>Akce</th></tr>
+  {% for name, state in services.items() %}
+  <tr>
+    <td>{{ name }}</td>
+    <td>{{ state }}</td>
+    <td>
+      <form method="post" action="{{ url_for('restart', service=name) }}">
+        <button type="submit">Restart</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Statistiky sítě</h2>
+{% for s in vnstat_stats %}
+  <h3>Rozhraní: {{ s.interface }}</h3>
+  {% if s.error %}
+    <p style="color:red">Chyba: {{ s.error }}</p>
+  {% else %}
+    <table border="1">
+      <tr><th>Typ</th><th>RX</th><th>TX</th><th>Celkem</th><th>Rychlost</th></tr>
+      <tr>
+        <td>Dnes</td>
+        <td>{{ s.rx_today }}</td>
+        <td>{{ s.tx_today }}</td>
+        <td>{{ s.total_today }}</td>
+        <td>{{ s.rate_today }}</td>
+      </tr>
+      <tr>
+        <td>Měsíc</td>
+        <td>{{ s.rx_month }}</td>
+        <td>{{ s.tx_month }}</td>
+        <td>{{ s.total_month }}</td>
+        <td>{{ s.rate_month }}</td>
+      </tr>
+      <tr>
+        <td>Celkem</td>
+        <td>{{ s.rx_total }}</td>
+        <td>{{ s.tx_total }}</td>
+        <td>{{ s.total_total }}</td>
+        <td>-</td>
+      </tr>
+    </table>
+
+    <canvas id="chart_{{ s.interface }}" width="400" height="200"></canvas>
+    <script>
+      const ctx_{{ s.interface }} = document.getElementById('chart_{{ s.interface }}').getContext('2d');
+      new Chart(ctx_{{ s.interface }}, {
+        type: 'bar',
+        data: {
+          labels: ['Dnes', 'Měsíc', 'Celkem'],
+          datasets: [
+            {
+              label: 'Příjem (RX)',
+              data: [
+                parseFloat('{{ s.rx_today.replace(",", ".").split(" ")[0] }}'),
+                parseFloat('{{ s.rx_month.replace(",", ".").split(" ")[0] }}'),
+                parseFloat('{{ s.rx_total.replace(",", ".").split(" ")[0] }}')
+              ],
+              backgroundColor: 'rgba(54, 162, 235, 0.6)'
+            },
+            {
+              label: 'Odeslání (TX)',
+              data: [
+                parseFloat('{{ s.tx_today.replace(",", ".").split(" ")[0] }}'),
+                parseFloat('{{ s.tx_month.replace(",", ".").split(" ")[0] }}'),
+                parseFloat('{{ s.tx_total.replace(",", ".").split(" ")[0] }}')
+              ],
+              backgroundColor: 'rgba(255, 99, 132, 0.6)'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            title: {
+              display: true,
+              text: 'Provoz rozhraní {{ s.interface }} (MiB)'
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'MiB'
+              }
+            }
+          }
+        }
+      });
+    </script>
+  {% endif %}
+{% endfor %}
+
+<h2>Ping statistiky</h2>
+<table border="1">
+  <tr><th>Cíl</th><th>Ztráta paketů</th><th>Průměrná doba odezvy (ms)</th></tr>
+  {% for p in ping_stats %}
+    <tr>
+      <td>{{ p.target }}</td>
+      <td>
+        {% if p.loss is not none %}
+          {{ p.loss }} %
+        {% else %}
+          N/A
+        {% endif %}
+      </td>
+      <td>
+        {% if p.avg_time_ms is not none %}
+          {{ "%.2f"|format(p.avg_time_ms) }}
+        {% else %}
+          N/A
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+</table>
+
+{% endblock %}

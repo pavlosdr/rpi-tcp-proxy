@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 /home/pi/modbus_tcp_proxy.py
-WorkingDirectory=/home/pi
+ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/modbus_tcp_proxy.py
+WorkingDirectory=/opt/rpi-admin-ui
 Restart=on-failure
 RestartSec=5
 User=root

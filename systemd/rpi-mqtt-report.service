@@ -1,12 +1,17 @@
 [Unit]
 Description=MQTT connectivity reporter
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/tools/mqtt_report.py
+ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/mqtt_report.py
 WorkingDirectory=/opt/rpi-admin-ui
-Restart=always
+Restart=on-failure
+RestartSec=5
 User=pi
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
