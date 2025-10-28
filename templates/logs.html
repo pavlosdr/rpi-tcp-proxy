@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+  <h2 class="mb-3">Logy proxy</h2>
+
+  <!-- Ovládací formulář -->
+  <form class="row g-2 mb-3" method="get" action="{{ url_for('logs') }}">
+    <div class="col-sm-3">
+      <label class="form-label">Časové okno (min)</label>
+      <input type="number" class="form-control" name="minutes" value="{{ minutes or 60 }}" min="1" max="1440">
+    </div>
+    <div class="col-sm-3">
+      <label class="form-label">Tail (počet řádků)</label>
+      <input type="number" class="form-control" name="tail" value="{{ tail_lines or 1000 }}" min="100" step="100">
+    </div>
+    <div class="col-sm-6 d-flex align-items-end gap-2">
+      <button class="btn btn-primary flex-grow-1" type="submit">Aktualizovat</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('logs_download') }}">Stáhnout celý log</a>
+    </div>
+  </form>
+
+  <!-- Soubor & cesta -->
+  <div class="mb-2">
+    <div><strong>Soubor:</strong> <code>{{ log_path }}</code></div>
+  </div>
+
+  <!-- Souhrnné karty -->
+  <div class="row g-3 mb-3">
+    <div class="col-sm-3">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Out of order</div>
+          <div class="h4 mb-0">{{ counts.out_of_order }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-3">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Stray response</div>
+          <div class="h4 mb-0">{{ counts.stray_response }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-3">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Duplicate request</div>
+          <div class="h4 mb-0">{{ counts.duplicate_request }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-3">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Celkem</div>
+          <div class="h4 mb-0">{{ counts.total }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RTT metriky (pokud jsou) -->
+  {% if rtt.samples and rtt.samples > 0 %}
+  <div class="row g-3 mb-3">
+    <div class="col-sm-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">RTT průměr</div>
+          <div class="h4 mb-0">{{ rtt.avg_ms }} ms</div>
+          <div class="text-muted small mt-1">vzorků: {{ rtt.samples }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">RTT p95</div>
+          <div class="h4 mb-0">{{ rtt.p95_ms }} ms</div>
+          <div class="text-muted small mt-1">vzorků: {{ rtt.samples }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Graf -->
+  <div class="card shadow-sm mb-3">
+    <div class="card-header">Chyby/události v čase (po minutách)</div>
+    <div class="card-body">
+      <canvas id="logChart" height="120"></canvas>
+    </div>
+  </div>
+
+  <!-- Tail logu -->
+  <div class="card shadow-sm">
+    <div class="card-header">Tail logu ({{ tail_lines }} řádků)</div>
+    <div class="card-body">
+      {% if tail_text and tail_text|length > 0 %}
+        <pre class="mb-0" style="white-space: pre-wrap; font-size: 12px; max-height: 70vh; overflow: auto;">{{ tail_text }}</pre>
+      {% else %}
+        <div class="alert alert-info mb-0">Žádná data k zobrazení. Změň filtry, ověř cestu k logu nebo práva.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Chart.js (už je natažen v base.html) -->
+<script>
+  const labels = {{ labels|tojson }};
+  const dsOut = {{ ds_out|tojson }};
+  const dsStr = {{ ds_str|tojson }};
+  const dsDup = {{ ds_dup|tojson }};
+  const dsTot = {{ ds_tot|tojson }};
+
+  const ctx = document.getElementById('logChart').getContext('2d');
+  const chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {label: 'out_of_order', data: dsOut, stack: 's1'},
+        {label: 'stray_response', data: dsStr, stack: 's1'},
+        {label: 'duplicate_request', data: dsDup, stack: 's1'},
+        {label: 'total', data: dsTot, type: 'line', yAxisID: 'y2'}
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: {mode: 'index', intersect: false},
+      scales: {
+        y: {beginAtZero: true, stacked: true, title: {display: true, text: 'Počet/ min'}},
+        y2: {beginAtZero: true, position: 'right', grid: {drawOnChartArea: false}, title: {display: true, text: 'Celkem'}}
+      },
+      plugins: {
+        legend: {display: true}
+      }
+    }
+  });
+</script>
+{% endblock %}

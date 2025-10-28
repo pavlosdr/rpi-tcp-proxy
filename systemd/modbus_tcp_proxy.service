@@ -10,6 +10,11 @@ WorkingDirectory=/opt/rpi-admin-ui
 Restart=on-failure
 RestartSec=5
 User=root
+# --- log file preparation ---
+PermissionsStartOnly=true
+ExecStartPre=/bin/mkdir -p /var/log
+ExecStartPre=/usr/bin/touch /var/log/modbus_proxy.log
+ExecStartPre=/bin/chmod 644 /var/log/modbus_proxy.log
 
 [Install]
 WantedBy=multi-user.target

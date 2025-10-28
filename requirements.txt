@@ -1,3 +1,4 @@
 flask
 python-dotenv
 paho-mqtt>=1.6.1
+python-socketio[client]

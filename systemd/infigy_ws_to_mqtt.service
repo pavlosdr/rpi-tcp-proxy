@@ -1,0 +1,18 @@
+[Unit]
+Description=Infigy Socket.IO -> MQTT bridge
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+Type=simple
+WorkingDirectory=/opt/rpi-admin-ui
+ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/infigy_ws_to_mqtt.py
+Restart=always
+RestartSec=5
+# Volitelně: smysluplný limit logů
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
