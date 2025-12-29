@@ -1,0 +1,16 @@
+[Unit]
+Description=Modbus IO Broker pro vypinace (RS485 -> MQTT)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/modbus_io_broker.py
+WorkingDirectory=/opt/rpi-admin-ui
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
