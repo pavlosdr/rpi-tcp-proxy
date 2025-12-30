@@ -44,6 +44,14 @@ MODBUS_BYTESIZE = 8
 MODBUS_TIMEOUT = 0.5     # v sekundách timeout na odpověď slave
 POLL_INTERVAL = 0.03     # 30ms mezi dotazy na sběrnici
 
+# ------------ INPUT TIMING ------------
+DEBOUNCE_MS = 40
+DOUBLE_CLICK_MS = 400
+LONG_PRESS_MS = 700
+# pro případ, že některé kanály jsou "aktivní LOW"
+# True = bit 1 znamená stisk/sepnuto, False = bit 0 znamená stisk/sepnuto
+DEFAULT_ACTIVE_HIGH = True
+
 # Definice IO modulů na sběrnici
 # - unit_id = Modbus adresa zařízení (1–247)
 # - name = logický název (pro MQTT topic)
