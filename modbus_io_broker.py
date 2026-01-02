@@ -8,6 +8,8 @@ Modbus IO broker pro vypínače / tlačítka
 import time
 import logging
 import os
+import sys
+import json
 from typing import Set, Tuple, Dict, Any, Optional
 from dotenv import load_dotenv
 
@@ -232,7 +234,7 @@ def create_modbus_client() -> ModbusSerialClient:
 def mqtt_publish_state(mqtt_client: mqtt.Client, name: str, value: bool) -> None:
     topic = f"{MQTT_TOPIC_STATE}/{name}"
     payload = "ON" if value else "OFF"
-    mqtt_client.publish(topic, payload, qos=1, retain=False)
+    mqtt_client.publish(topic, payload, qos=1, retain=True)
 
 
 def mqtt_publish_event(mqtt_client: mqtt.Client, name: str, event: str) -> None:
@@ -275,8 +277,15 @@ def main():
             stable_states[name] = False
 
     unit_idx = 0
+
     # --- log suppression state per unit ---
     unit_err_state: Dict[int, Dict[str, Any]] = {}  # {unit: {"in_error": bool, "count": int}}
+
+    # --- startup publish state ---
+    # posíláme jen switch stavy, tlačítka ne (aby nevznikaly fake eventy)
+    published_states: Dict[str, bool] = {}  # name -> last published
+    pending_units = set(UNITS)              # které unity jsme ještě po startu nenačetli OK
+    startup_done = False
 
     try:
         while True:
@@ -287,61 +296,93 @@ def main():
             unit_idx = (unit_idx + 1) % len(UNITS)
 
             try:
-                rr = modbus_client.read_discrete_inputs(address=0, count=CHANNELS_PER_SLAVE, unit=unit)  # FC02, addr 0
+                rr = modbus_client.read_discrete_inputs(
+                    address=0, count=CHANNELS_PER_SLAVE, unit=unit
+                )  # FC02, addr 0
+
                 st = unit_err_state.get(unit)
                 if st is None:
                     st = {"in_error": False, "count": 0}
                     unit_err_state[unit] = st
+
                 if rr.isError():
-                    # chyba: zaloguj jen první přechod OK -> ERROR
                     st["count"] += 1
                     if not st["in_error"]:
                         st["in_error"] = True
                         logger.warning(f"Modbus read error unit={unit}: {rr}")
-                    # další chyby už nepiš (ticho)
+
+                    time.sleep(POLL_INTERVAL_S)
                     continue
+
                 # OK: pokud jsme byli v chybě, zaloguj recovered 1×
                 if st["in_error"]:
                     st["in_error"] = False
                     logger.info(f"Modbus unit={unit} recovered (errors={st['count']})")
                     st["count"] = 0
-                    
-                    bits = list(getattr(rr, "bits", []))[:CHANNELS_PER_SLAVE]
-                    cfg_unit = INPUTS.get(unit, {})
 
-                    for ch in range(CHANNELS_PER_SLAVE):
-                        cfg = cfg_unit.get(ch)
-                        if not cfg:
-                            continue
+                bits = list(getattr(rr, "bits", []))[:CHANNELS_PER_SLAVE]
+                cfg_unit = INPUTS.get(unit, {})
 
-                        name = cfg["name"]
-                        typ = cfg["type"]
-                        active_high = cfg.get("active_high", DEFAULT_ACTIVE_HIGH)
+                # budeme sbírat i "startup snapshot" pro tuto jednotku
+                startup_snapshot: Dict[str, bool] = {}
 
-                        ensure_channel(name, typ)
+                for ch in range(CHANNELS_PER_SLAVE):
+                    cfg = cfg_unit.get(ch)
+                    if not cfg:
+                        continue
 
-                        raw = bool(bits[ch]) if ch < len(bits) else False
-                        logical = raw if active_high else (not raw)
+                    name = cfg["name"]
+                    typ = cfg["type"]
+                    active_high = cfg.get("active_high", DEFAULT_ACTIVE_HIGH)
 
-                        new_stable = debouncers[name].update(logical, t)
-                        if new_stable is None:
-                            continue
+                    ensure_channel(name, typ)
 
-                        old = stable_states.get(name, False)
-                        stable_states[name] = new_stable
+                    raw = bool(bits[ch]) if ch < len(bits) else False
+                    logical = raw if active_high else (not raw)
 
-                        if typ == "switch":
+                    # uložíme snapshot pro startup publish (jen switch)
+                    if typ == "switch":
+                        startup_snapshot[name] = logical
+
+                    new_stable = debouncers[name].update(logical, t)
+                    if new_stable is None:
+                        continue
+
+                    old = stable_states.get(name, False)
+                    stable_states[name] = new_stable
+
+                    if typ == "switch":
+                        # publish jen když se stav změnil (nebo ještě nebyl publishnut)
+                        prev_pub = published_states.get(name, None)
+                        if prev_pub is None or prev_pub != new_stable:
                             logger.info(f"State: {name} -> {'ON' if new_stable else 'OFF'}")
                             mqtt_publish_state(mqtt_client, name, new_stable)
+                            published_states[name] = new_stable
 
-                        elif typ == "button":
-                            # jen hrany - press / release
-                            if (not old) and new_stable:
-                                logger.info(f"Event: {name} -> press")
-                                mqtt_publish_event(mqtt_client, name, "press")
-                            elif old and (not new_stable):
-                                logger.info(f"Event: {name} -> release")
-                                mqtt_publish_event(mqtt_client, name, "release")
+                    elif typ == "button":
+                        # jen hrany - press / release
+                        if (not old) and new_stable:
+                            logger.info(f"Event: {name} -> press")
+                            mqtt_publish_event(mqtt_client, name, "press")
+                        elif old and (not new_stable):
+                            logger.info(f"Event: {name} -> release")
+                            mqtt_publish_event(mqtt_client, name, "release")
+
+                # ---- Startup publish: po prvním OK čtení unity ----
+                if not startup_done and unit in pending_units:
+                    # publishni snapshot switchů pro tuto unit (pokud ještě nebyly poslané)
+                    for name, stval in startup_snapshot.items():
+                        prev_pub = published_states.get(name, None)
+                        if prev_pub is None:
+                            # tady publishujeme bez "State:" logu pro každou položku (ať to nezahlcuje)
+                            mqtt_publish_state(mqtt_client, name, stval)
+                            published_states[name] = stval
+
+                    pending_units.discard(unit)
+
+                    if not pending_units:
+                        startup_done = True
+                        logger.info("Startup sync completed: published initial switch states for all units")
 
             except Exception as e:
                 logger.exception(f"Polling exception: {e}")
