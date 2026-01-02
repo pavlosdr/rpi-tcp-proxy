@@ -9,11 +9,10 @@ import sys
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 
-# --- connection latches ---
+# ------------------ connection latches ------------------- #
 connected = threading.Event()
 last_event_ts = time.monotonic() # heartbeat for WS payloads
-
-# --- log runtime ---
+# ---------------------- LOG runtime ---------------------- #
 print("__file__ running from:", __file__)
 print("PYTHON:", sys.executable)
 print("PAHO_VERSION:", getattr(mqtt, "__version__", "unknown"))
@@ -30,7 +29,6 @@ current_power = {
 "boiler_total": 0.0
 }
 
-
 # integrované energie (kWh)
 energy_totals = {
 "home": 0.0,
@@ -41,14 +39,14 @@ energy_totals = {
 "bat_discharge": 0.0,
 "boiler_total": 0.0
 }
-
-# --- .env ---
+# ---------------------- KONFIGURACE ---------------------- #
+# ------------------------ .env --------------------------- #
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
-# --- Konfig z .env ---
-# --- MQTT ---
+# ------------------- Konfig z .env ----------------------- #
+# MQTT 
 MQTT_HOST   = os.getenv("MQTT_HOST", "localhost")
 MQTT_PORT   = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER   = os.getenv("MQTT_USER", "")
@@ -59,7 +57,7 @@ AUTH_COOKIE = os.getenv("AUTH_COOKIE", "").strip()
 AUTH_BEARER = os.getenv("AUTH_BEARER", "").strip()
 MQTT_WATCHDOG_INTERVAL_S = int(os.getenv("MQTT_WATCHDOG_INTERVAL_S", "15"))
 MQTT_RECONNECT_BACKOFF_MAX_S = int(os.getenv("MQTT_RECONNECT_BACKOFF_MAX_S", "60"))
-# --- Infigy ---
+# Infigy
 INFIGY_HOST = os.getenv("INFIGY_HOST", "http://127.0.0.1")
 SOCKET_PATH = os.getenv("SOCKET_PATH", "/socket.io")
 DISCOVERY_PREFIX = os.getenv("DISCOVERY_PREFIX", "homeassistant")
@@ -89,7 +87,7 @@ mqttc.will_set(f"{MQTT_BASE}/bridge/online", "0", qos=1, retain=True)
 # Auto-reconnect backoff
 mqttc.reconnect_delay_set(min_delay=2, max_delay=MQTT_RECONNECT_BACKOFF_MAX_S)
 
-# --- helpers ---
+# ---------------------- helpers -------------------------- #
 def touch():
     global last_event_ts
     last_event_ts = time.monotonic()

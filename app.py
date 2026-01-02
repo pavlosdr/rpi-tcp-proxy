@@ -21,6 +21,7 @@ from monitor import (
     start_service_safe,
     stop_service_safe,
     get_mqtt_latency_test,
+    get_modbus_rtt_test,
 )
 
 # načti .env ze stejného adresáře
@@ -403,6 +404,7 @@ def network():
     ping_results = []
     iperf_result = None
     mqtt_latency = None  # posíláme do šablony
+    modbus_rtt = None
     default_targets = "8.8.8.8, 192.168.1.1, 192.168.1.9, 192.168.1.10, 192.168.1.20"
 
     if request.method == "POST":
@@ -507,11 +509,52 @@ def network():
                     "details": [],
                 }
 
+        elif action == "modbus_rtt":
+            # Vezmi stejné parametry jako broker
+            port = os.getenv("MODBUS_IO_MODBUS_PORT", "/dev/ttyUSB0")
+            baudrate = int(os.getenv("MODBUS_IO_MODBUS_BAUDRATE", "9600"))
+            parity = os.getenv("MODBUS_IO_MODBUS_PARITY", "N")
+            stopbits = int(os.getenv("MODBUS_IO_MODBUS_STOPBITS", "1"))
+            bytesize = int(os.getenv("MODBUS_IO_MODBUS_BYTESIZE", "8"))
+            timeout_s = float(os.getenv("MODBUS_IO_MODBUS_TIMEOUT", "0.5"))
+
+            # slave list z MODBUS_IO_SLAVES
+            slaves_raw = os.getenv("MODBUS_IO_SLAVES", "")
+            slaves = [int(x.strip()) for x in slaves_raw.split(",") if x.strip().isdigit()]
+
+            # parametry testu
+            samples = int(os.getenv("MODBUS_IO_MODBUS_RTT_SAMPLES", "30"))
+            interval_ms = int(os.getenv("MODBUS_IO_MODBUS_RTT_INTERVAL_MS", "50"))
+            method = os.getenv("MODBUS_IO_MODBUS_RTT_METHOD", "di")  # di/hr
+            address = int(os.getenv("MODBUS_IO_MODBUS_RTT_ADDR", "0"))
+            count = int(os.getenv("MODBUS_IO_MODBUS_RTT_COUNT", "1"))
+
+            ok_ms = float(os.getenv("MODBUS_IO_MODBUS_RTT_OK_MS", "50"))
+            warn_ms = float(os.getenv("MODBUS_IO_MODBUS_RTT_WARN_MS", "150"))
+
+            modbus_rtt = get_modbus_rtt_test(
+                port=port,
+                baudrate=baudrate,
+                parity=parity,
+                stopbits=stopbits,
+                bytesize=bytesize,
+                timeout_s=timeout_s,
+                slaves=slaves,
+                samples=samples,
+                interval_ms=interval_ms,
+                address=address,
+                count=count,
+                method=method,
+                ok_ms=ok_ms,
+                warn_ms=warn_ms,
+            )
+
     return render_template(
         "network.html",
         ping_results=ping_results,
         iperf_result=iperf_result,
         mqtt_latency=mqtt_latency,
+        modbus_rtt=modbus_rtt,  
         vnstat_stats=get_all_vnstat_stats(),  # tabulky vnstat na Network stránce
         default_targets=default_targets,
         iperf_ip=request.form.get("iperf_ip", "192.168.1.20") if request.method == "POST" else "192.168.1.20",

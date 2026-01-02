@@ -410,3 +410,217 @@ def get_mqtt_latency_test(
             client.disconnect()
         except Exception:
             pass
+
+def get_modbus_rtt_test(
+    port: str,
+    baudrate: int = 9600,
+    parity: str = "N",
+    stopbits: int = 1,
+    bytesize: int = 8,
+    timeout_s: float = 0.5,
+    slaves=None,                 # list[int]
+    samples: int = 30,
+    interval_ms: int = 50,
+    address: int = 0,
+    count: int = 1,
+    method: str = "di",          # "di" (FC02) nebo "hr" (FC03)
+    ok_ms: float = 50.0,
+    warn_ms: float = 150.0,
+):
+    """
+    Modbus RTU RTT test (čas jednoho read požadavku/odpovědi).
+    - method="di" => read_discrete_inputs (FC02)
+    - method="hr" => read_holding_registers (FC03)
+
+    Vrací dict ve stylu MQTT latency:
+      {
+        "ok": True/False,
+        "sent": N,
+        "received": M,
+        "loss": N-M,
+        "min_ms": .., "avg_ms": .., "p95_ms": .., "max_ms": ..,
+        "details": [{"seq":1,"unit":128,"rtt_ms":12.3}, ...],
+        "error": None | "...",
+        "ok_ms": ok_ms,
+        "warn_ms": warn_ms,
+        "semafor": "ok"|"warning"|"bad"|"unknown",
+        "badge": "success"|"warning"|"danger"|"secondary"
+      }
+    """
+    import time
+    from threading import Lock
+
+    try:
+        # pymodbus 3.x
+        from pymodbus.client import ModbusSerialClient
+    except Exception:
+        # pymodbus 2.x
+        from pymodbus.client.sync import ModbusSerialClient
+
+    # sanitize
+    try:
+        samples = int(samples)
+    except Exception:
+        samples = 30
+    samples = max(1, min(samples, 300))
+
+    try:
+        interval_ms = int(interval_ms)
+    except Exception:
+        interval_ms = 50
+    interval_ms = max(0, min(interval_ms, 5000))
+
+    try:
+        timeout_s = float(timeout_s)
+    except Exception:
+        timeout_s = 0.5
+    timeout_s = max(0.05, min(timeout_s, 5.0))
+
+    if slaves is None:
+        slaves = []
+    try:
+        slaves = [int(x) for x in slaves if str(x).strip() != ""]
+    except Exception:
+        slaves = []
+
+    result = {
+        "ok": False,
+        "sent": 0,
+        "received": 0,
+        "loss": 0,
+        "min_ms": None,
+        "avg_ms": None,
+        "p95_ms": None,
+        "max_ms": None,
+        "details": [],
+        "error": None,
+        "ok_ms": float(ok_ms),
+        "warn_ms": float(warn_ms),
+        "semafor": "unknown",
+        "badge": "secondary",
+        "method": method,
+        "address": address,
+        "count": count,
+        "slaves": slaves,
+    }
+
+    if not slaves:
+        result["error"] = "MODBUS: seznam slave je prázdný"
+        return result
+
+    lock = Lock()
+    rtts = []
+
+    client = ModbusSerialClient(
+        method="rtu",
+        port=port,
+        baudrate=int(baudrate),
+        parity=str(parity),
+        stopbits=int(stopbits),
+        bytesize=int(bytesize),
+        timeout=float(timeout_s),
+    )
+
+    try:
+        if not client.connect():
+            result["error"] = f"MODBUS: nelze otevřít port {port}"
+            return result
+
+        unit_idx = 0
+        for seq in range(1, samples + 1):
+            unit = slaves[unit_idx]
+            unit_idx = (unit_idx + 1) % len(slaves)
+
+            t0 = time.monotonic()
+            result["sent"] += 1
+
+            try:
+                if method == "hr":
+                    rr = client.read_holding_registers(address=address, count=count, unit=unit)
+                else:
+                    rr = client.read_discrete_inputs(address=address, count=count, unit=unit)
+
+                t1 = time.monotonic()
+                rtt_ms = (t1 - t0) * 1000.0
+
+                ok = (rr is not None) and (not rr.isError())
+                if ok:
+                    with lock:
+                        result["received"] += 1
+                        rtts.append(rtt_ms)
+                        result["details"].append({
+                            "seq": seq,
+                            "unit": unit,
+                            "rtt_ms": round(rtt_ms, 2),
+                        })
+                else:
+                    # error response
+                    with lock:
+                        result["details"].append({
+                            "seq": seq,
+                            "unit": unit,
+                            "rtt_ms": None,
+                        })
+
+            except Exception:
+                with lock:
+                    result["details"].append({
+                        "seq": seq,
+                        "unit": unit,
+                        "rtt_ms": None,
+                    })
+
+            if interval_ms > 0:
+                time.sleep(interval_ms / 1000.0)
+
+        result["loss"] = max(0, result["sent"] - result["received"])
+
+        if rtts:
+            rtts_sorted = sorted(rtts)
+            result["min_ms"] = round(rtts_sorted[0], 2)
+            result["max_ms"] = round(rtts_sorted[-1], 2)
+            result["avg_ms"] = round(sum(rtts_sorted) / len(rtts_sorted), 2)
+
+            idx = int(0.95 * len(rtts_sorted)) - 1
+            idx = max(0, min(idx, len(rtts_sorted) - 1))
+            result["p95_ms"] = round(rtts_sorted[idx], 2)
+
+            result["ok"] = True
+
+            # semafor podle p95
+            p95 = result["p95_ms"] if result["p95_ms"] is not None else None
+            if p95 is None:
+                result["semafor"] = "unknown"
+                result["badge"] = "secondary"
+            elif result["loss"] > 0:
+                result["semafor"] = "bad"
+                result["badge"] = "danger"
+            elif p95 <= result["ok_ms"]:
+                result["semafor"] = "ok"
+                result["badge"] = "success"
+            elif p95 <= result["warn_ms"]:
+                result["semafor"] = "warning"
+                result["badge"] = "warning"
+            else:
+                result["semafor"] = "bad"
+                result["badge"] = "danger"
+        else:
+            result["error"] = "MODBUS: žádné odpovědi (0 received)"
+            result["ok"] = False
+            result["semafor"] = "bad"
+            result["badge"] = "danger"
+
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        result["ok"] = False
+        result["semafor"] = "bad"
+        result["badge"] = "danger"
+        return result
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+

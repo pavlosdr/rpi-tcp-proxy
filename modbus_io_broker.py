@@ -20,14 +20,19 @@ except ImportError:
 
 import paho.mqtt.client as mqtt
 
+# ---------------------- LOG runtime ---------------------- #
+print("__file__ running from:", __file__)
+print("PYTHON:", sys.executable)
+print("PAHO_VERSION:", getattr(mqtt, "__version__", "unknown"))
+print("HAS_V2:", hasattr(mqtt, "CallbackAPIVersion"))
 # ---------------------- KONFIGURACE ---------------------- #
 
-# ------------------------ .env ----------------------------
+# ------------------------ .env --------------------------- #
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
-# ----------------- Helpery pro čtení .env  ----------------
+# ----------------- Helpery pro čtení .env  --------------- #
 def env_str(key: str, default: str = "") -> str:
     v = os.getenv(key)
     return v.strip() if v is not None and str(v).strip() != "" else default
@@ -45,7 +50,7 @@ def env_bool(key: str, default: bool = False) -> bool:
     if not v:
         return default
     return v.lower() in ("1", "true", "yes", "on")
-# ------------------- Konfig z .env ------------------------
+# ------------------- Konfig z .env ----------------------- #
 MODBUS_IO_ENABLED = env_bool("MODBUS_IO_ENABLED", True)
 # MQTT broker
 MQTT_HOST = env_str("MODBUS_IO_MQTT_HOST", "192.168.1.20") # IP, kde běží MQTT (core-mosquitto/HA)
@@ -69,7 +74,7 @@ MODBUS_PARITY = env_str("MODBUS_IO_MODBUS_PARITY", "N")
 MODBUS_STOPBITS = env_int("MODBUS_IO_MODBUS_STOPBITS", 1)
 MODBUS_BYTESIZE = env_int("MODBUS_IO_MODBUS_BYTESIZE", 8)
 MODBUS_TIMEOUT = env_float("MODBUS_IO_MODBUS_TIMEOUT", 0.5) # v sekundách timeout na odpověď slave
-# ------------------- Konfig z .env ------------------------
+
 # ------------------- INPUT TIMING -------------------------
 # Round-robin interval mezi dotazy na sběrnici běžně 30 ms
 POLL_INTERVAL_S = env_float("MODBUS_IO_POLL_INTERVAL_S", 0.03) 
@@ -126,6 +131,9 @@ def build_inputs_from_env() -> Dict[int, Dict[int, Dict[str, Any]]]:
     return inputs
 
 # ---------------------- Logging ---------------------------
+# Log minimization
+LOG_FIRST_ERROR_ONLY = True   # jen první chyba po OK + recovered
+LOG_ERROR_COOLDOWN_S = 0      # 0 = nepoužívat periodické logy, opravdu ticho
 LOG_LEVEL = logging.INFO
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -267,6 +275,8 @@ def main():
             stable_states[name] = False
 
     unit_idx = 0
+    # --- log suppression state per unit ---
+    unit_err_state: Dict[int, Dict[str, Any]] = {}  # {unit: {"in_error": bool, "count": int}}
 
     try:
         while True:
@@ -278,9 +288,24 @@ def main():
 
             try:
                 rr = modbus_client.read_discrete_inputs(address=0, count=CHANNELS_PER_SLAVE, unit=unit)  # FC02, addr 0
+                st = unit_err_state.get(unit)
+                if st is None:
+                    st = {"in_error": False, "count": 0}
+                    unit_err_state[unit] = st
                 if rr.isError():
-                    logger.warning(f"Modbus read error unit={unit}: {rr}")
-                else:
+                    # chyba: zaloguj jen první přechod OK -> ERROR
+                    st["count"] += 1
+                    if not st["in_error"]:
+                        st["in_error"] = True
+                        logger.warning(f"Modbus read error unit={unit}: {rr}")
+                    # další chyby už nepiš (ticho)
+                    continue
+                # OK: pokud jsme byli v chybě, zaloguj recovered 1×
+                if st["in_error"]:
+                    st["in_error"] = False
+                    logger.info(f"Modbus unit={unit} recovered (errors={st['count']})")
+                    st["count"] = 0
+                    
                     bits = list(getattr(rr, "bits", []))[:CHANNELS_PER_SLAVE]
                     cfg_unit = INPUTS.get(unit, {})
 
