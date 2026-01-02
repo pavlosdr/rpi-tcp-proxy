@@ -5,8 +5,10 @@ import re
 
 SERVICES = {
     "modbus_tcp_proxy": "modbus_tcp_proxy.service",
+    "modbus_io_broker": "modbus_io_broker.service",
+    "infigy_ws_to_mqtt": "infigy_ws_to_mqtt.service",
     "rpi-mqtt-report": "rpi-mqtt-report.service",
-    "rpi-admin-ui": "rpi-admin-ui.service"
+    "rpi-admin-ui": "rpi-admin-ui.service",
 }
 
 def run(cmd):
@@ -42,21 +44,60 @@ def get_services_status():
     status = {}
     for pretty, unit in SERVICES.items():
         try:
-            out = subprocess.check_output(["systemctl", "is-active", unit], text=True).strip()
-        except subprocess.CalledProcessError:
-            out = "unknown"
+            out = subprocess.check_output(
+                ["systemctl", "is-active", unit],
+                text=True,
+                stderr=subprocess.STDOUT
+            ).strip()
+        except subprocess.CalledProcessError as e:
+            out = (e.output or "").strip() or "unknown"
         status[pretty] = out
     return status
+
 
 def restart_service_safe(pretty_name: str):
     unit = SERVICES.get(pretty_name)
     if not unit:
         return False, f"Služba '{pretty_name}' není povolena"
+
     try:
-        subprocess.check_call(["sudo", "systemctl", "restart", unit])
-        return True, f"Služba '{pretty_name}' restartována"
+        # Speciální případ: restart samotného UI musí být "odložený",
+        # aby Flask stihl poslat odpověď prohlížeči.
+        if unit == "rpi-admin-ui.service":
+            subprocess.check_call([
+                "sudo", "systemd-run",
+                "--unit", "rpi-admin-ui-restart-job",
+                "--on-active=2s",
+                "/bin/systemctl", "restart", unit
+            ])
+            return True, f"Služba '{pretty_name}' bude restartována (za 2 s)"
+        else:
+            subprocess.check_call(["sudo", "systemctl", "restart", unit])
+            return True, f"Služba '{pretty_name}' restartována"
+
     except subprocess.CalledProcessError as e:
         return False, f"Restart selhal: {e}"
+
+
+def start_service_safe(pretty_name: str):
+    unit = SERVICES.get(pretty_name)
+    if not unit:
+        return False, f"Služba '{pretty_name}' není povolena"
+    try:
+        subprocess.check_call(["sudo", "systemctl", "start", unit])
+        return True, f"Služba '{pretty_name}' spuštěna"
+    except subprocess.CalledProcessError as e:
+        return False, f"Start selhal: {e}"
+
+def stop_service_safe(pretty_name: str):
+    unit = SERVICES.get(pretty_name)
+    if not unit:
+        return False, f"Služba '{pretty_name}' není povolena"
+    try:
+        subprocess.check_call(["sudo", "systemctl", "stop", unit])
+        return True, f"Služba '{pretty_name}' zastavena"
+    except subprocess.CalledProcessError as e:
+        return False, f"Stop selhal: {e}"
 
 def get_ping_stats(target="8.8.8.8", count=4):
     try:
@@ -144,10 +185,228 @@ def get_iperf_test(server_ip="127.0.0.1", duration=10):
         return {"server": server_ip, "error": str(e)}
 
 
-
 def get_tailscale_status():
     try:
         result = subprocess.run(["tailscale", "status"], capture_output=True, text=True)
         return result.stdout.strip()
     except Exception as e:
         return f"Error: {e}"
+    
+def get_service_detail(pretty_name: str, journal_lines: int = 200):
+    unit = SERVICES.get(pretty_name)
+    if not unit:
+        return None, None, f"Služba '{pretty_name}' není povolena"
+
+    # systemctl status
+    try:
+        status_out = subprocess.check_output(
+            ["systemctl", "status", unit, "--no-pager", "--full"],
+            text=True,
+            stderr=subprocess.STDOUT
+        )
+    except subprocess.CalledProcessError as e:
+        status_out = (e.output or "").strip()
+        if not status_out:
+            status_out = f"systemctl status selhal: {e}"
+
+    # journalctl (posledních N řádků)
+    try:
+        journal_out = subprocess.check_output(
+            ["journalctl", "-u", unit, "-n", str(journal_lines), "--no-pager", "--output=short-iso"],
+            text=True,
+            stderr=subprocess.STDOUT
+        )
+    except subprocess.CalledProcessError as e:
+        journal_out = (e.output or "").strip()
+        if not journal_out:
+            journal_out = f"journalctl selhal: {e}"
+
+    return status_out, journal_out, None
+
+def get_mqtt_latency_test(
+    host: str,
+    port: int = 1883,
+    username: str = "",
+    password: str = "",
+    samples: int = 20,
+    interval_ms: int = 50,
+    timeout_s: float = 2.0,
+    topic_prefix: str = "diag/mqtt_latency",
+):
+    """
+    MQTT loopback latency test (publish -> broker -> receive do stejneho klienta).
+    Vraci dict:
+      {
+        "ok": True/False,
+        "loss": int,
+        "sent": int,
+        "received": int,
+        "min_ms": float|None,
+        "avg_ms": float|None,
+        "p95_ms": float|None,
+        "max_ms": float|None,
+        "details": [ { "seq":1, "rtt_ms": 12.3 } ... ],
+        "error": "..." | None
+      }
+    """
+    import time
+    import uuid
+    import statistics
+    from threading import Event, Lock
+    import paho.mqtt.client as mqtt
+
+    # sane defaults
+    try:
+        samples = int(samples)
+    except Exception:
+        samples = 20
+    samples = max(1, min(samples, 200))
+
+    try:
+        interval_ms = int(interval_ms)
+    except Exception:
+        interval_ms = 50
+    interval_ms = max(0, min(interval_ms, 5000))
+
+    try:
+        timeout_s = float(timeout_s)
+    except Exception:
+        timeout_s = 2.0
+    timeout_s = max(0.2, min(timeout_s, 10.0))
+
+    run_id = uuid.uuid4().hex[:8]
+    topic = f"{topic_prefix}/{run_id}"
+
+    result = {
+        "ok": False,
+        "loss": 0,
+        "sent": 0,
+        "received": 0,
+        "min_ms": None,
+        "avg_ms": None,
+        "p95_ms": None,
+        "max_ms": None,
+        "details": [],
+        "error": None,
+        "topic": topic,
+    }
+
+    lock = Lock()
+    got_connect = Event()
+    got_sub = Event()
+
+    # seq -> send_time_monotonic
+    sent_at = {}
+    rtts = []
+
+    def on_connect(c, userdata, flags, rc):
+        if rc == 0:
+            got_connect.set()
+            c.subscribe(topic, qos=0)
+        else:
+            result["error"] = f"MQTT connect failed rc={rc}"
+            got_connect.set()
+
+    def on_subscribe(c, userdata, mid, granted_qos):
+        got_sub.set()
+
+    def on_message(c, userdata, msg):
+        try:
+            payload = msg.payload.decode("utf-8", errors="replace")
+            # format: "seq=<n>;t=<monotonic>"
+            parts = {}
+            for p in payload.split(";"):
+                if "=" in p:
+                    k, v = p.split("=", 1)
+                    parts[k.strip()] = v.strip()
+
+            seq = int(parts.get("seq", "0"))
+            t_sent = float(parts.get("t", "0"))
+
+            t_now = time.monotonic()
+            rtt_ms = (t_now - t_sent) * 1000.0
+
+            with lock:
+                if seq in sent_at:
+                    rtts.append(rtt_ms)
+                    result["details"].append({"seq": seq, "rtt_ms": round(rtt_ms, 2)})
+                    result["received"] += 1
+        except Exception:
+            # ignore malformed
+            pass
+
+    client = mqtt.Client(client_id=f"rpi-ui-lat-{run_id}", clean_session=True)
+    if username or password:
+        client.username_pw_set(username, password)
+
+    client.on_connect = on_connect
+    client.on_subscribe = on_subscribe
+    client.on_message = on_message
+
+    try:
+        client.connect(host, int(port), keepalive=20)
+        client.loop_start()
+
+        # wait connect + subscribe
+        got_connect.wait(timeout=timeout_s)
+        if result["error"]:
+            return result
+        if not got_connect.is_set():
+            result["error"] = "MQTT connect timeout"
+            return result
+
+        got_sub.wait(timeout=timeout_s)
+        if not got_sub.is_set():
+            result["error"] = "MQTT subscribe timeout"
+            return result
+
+        # send samples
+        for seq in range(1, samples + 1):
+            t0 = time.monotonic()
+            with lock:
+                sent_at[seq] = t0
+                result["sent"] += 1
+            payload = f"seq={seq};t={t0}"
+            client.publish(topic, payload, qos=0, retain=False)
+
+            if interval_ms > 0:
+                time.sleep(interval_ms / 1000.0)
+
+        # wait for remaining responses
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            with lock:
+                if result["received"] >= result["sent"]:
+                    break
+            time.sleep(0.01)
+
+        with lock:
+            result["loss"] = max(0, result["sent"] - result["received"])
+
+        if rtts:
+            rtts_sorted = sorted(rtts)
+            result["min_ms"] = round(rtts_sorted[0], 2)
+            result["max_ms"] = round(rtts_sorted[-1], 2)
+            result["avg_ms"] = round(sum(rtts_sorted) / len(rtts_sorted), 2)
+
+            # p95
+            idx = int(0.95 * len(rtts_sorted)) - 1
+            idx = max(0, min(idx, len(rtts_sorted) - 1))
+            result["p95_ms"] = round(rtts_sorted[idx], 2)
+
+            result["ok"] = True
+        else:
+            result["error"] = "No MQTT responses received"
+            result["ok"] = False
+
+        return result
+
+    except Exception as e:
+        result["error"] = str(e)
+        return result
+    finally:
+        try:
+            client.loop_stop()
+            client.disconnect()
+        except Exception:
+            pass

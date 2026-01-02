@@ -17,6 +17,10 @@ from monitor import (
     get_multi_ping_stats,
     get_all_vnstat_stats,
     get_iperf_test,
+    get_service_detail,
+    start_service_safe,
+    stop_service_safe,
+    get_mqtt_latency_test,
 )
 
 # načti .env ze stejného adresáře
@@ -144,15 +148,9 @@ def parse_log_metrics(
 @login_required
 def index():
     info = get_system_info()
-    services = get_services_status()
-    ping_stats = get_multi_ping_stats()
-    vnstat_stats = get_all_vnstat_stats()
     return render_template(
         "index.html",
         info=info,
-        services=services,
-        ping_stats=ping_stats,
-        vnstat_stats=vnstat_stats,
         title="Dashboard",
     )
 
@@ -161,7 +159,57 @@ def index():
 def restart(service):
     ok, msg = restart_service_safe(service)
     flash(msg, "success" if ok else "error")
-    return redirect(url_for("index"))
+    return redirect(request.referrer or url_for("services_page"))
+
+@app.route("/start/<service>", methods=["POST"])
+@login_required
+def start_service(service):
+    ok, msg = start_service_safe(service)
+    flash(msg, "success" if ok else "error")
+    return redirect(request.referrer or url_for("services_page"))
+
+@app.route("/stop/<service>", methods=["POST"])
+@login_required
+def stop_service(service):
+    ok, msg = stop_service_safe(service)
+    flash(msg, "success" if ok else "error")
+    return redirect(request.referrer or url_for("services_page"))
+
+@app.route("/services", methods=["GET"])
+@login_required
+def services_page():
+    services = get_services_status()
+    return render_template(
+        "services.html",
+        services=services,
+        title="Služby",
+    )
+
+@app.route("/services/<pretty_name>", methods=["GET"])
+@login_required
+def service_detail(pretty_name):
+    journal_lines = int(request.args.get("n", 200))
+    status_out, journal_out, err = get_service_detail(pretty_name, journal_lines=journal_lines)
+    if err:
+        flash(err, "error")
+        return redirect(url_for("services_page"))
+
+    unit = None
+    try:
+        from monitor import SERVICES
+        unit = SERVICES.get(pretty_name)
+    except Exception:
+        unit = None
+
+    return render_template(
+        "service_detail.html",
+        title=f"Detail služby: {pretty_name}",
+        pretty_name=pretty_name,
+        unit=unit or "",
+        status_out=status_out,
+        journal_out=journal_out,
+        journal_lines=journal_lines,
+    )
 
 @app.route("/env", methods=["GET", "POST"])
 @login_required
@@ -180,6 +228,14 @@ def show_env():
         "MQTT_ENABLED", "MQTT_HOST", "MQTT_PORT", "MQTT_TOPIC_PREFIX", "MQTT_REPORT_INTERVAL",
         # UI
         "UI_USER", "UI_PASS", "UI_SECRET", "PORT",
+        # RPi Modbus IO Broker
+        "MODBUS_IO_ENABLED", "MODBUS_IO_MQTT_HOST", "MODBUS_IO_MQTT_PORT", 
+        "MODBUS_IO_MQTT_USERNAME", "MODBUS_IO_MQTT_PASSWORD",
+        "MODBUS_IO_MQTT_CLIENT_ID", "MODBUS_IO_MQTT_BASE_TOPIC",
+        "MODBUS_IO_MODBUS_PORT", "MODBUS_IO_MODBUS_BAUDRATE", "MODBUS_IO_MODBUS_TIMEOUT",
+        "MODBUS_IO_POLL_INTERVAL_S", "MODBUS_IO_DEBOUNCE_SWITCH_MS", 
+        "MODBUS_IO_DEBOUNCE_BUTTON_MS", "MODBUS_IO_SLAVES", "MODBUS_IO_CHANNELS_PER_SLAVE", 
+        "MODBUS_IO_NAME_PREFIX", "MODBUS_IO_DEFAULT_TYPE", "MODBUS_IO_BUTTONS",
     ]
 
     if request.method == "POST":
@@ -228,6 +284,13 @@ def show_env():
         "LOG_STATS_INTERVAL", "LOG_MAX_BYTES", "LOG_BACKUP_COUNT", "DROP_STRAY_SILENT",
         "MQTT_ENABLED", "MQTT_HOST", "MQTT_PORT", "MQTT_TOPIC_PREFIX", "MQTT_REPORT_INTERVAL",
         "UI_USER", "UI_PASS", "UI_SECRET", "PORT",
+        "MODBUS_IO_ENABLED", "MODBUS_IO_MQTT_HOST", "MODBUS_IO_MQTT_PORT", 
+        "MODBUS_IO_MQTT_USERNAME", "MODBUS_IO_MQTT_PASSWORD",
+        "MODBUS_IO_MQTT_CLIENT_ID", "MODBUS_IO_MQTT_BASE_TOPIC",
+        "MODBUS_IO_MODBUS_PORT", "MODBUS_IO_MODBUS_BAUDRATE", "MODBUS_IO_MODBUS_TIMEOUT",
+        "MODBUS_IO_POLL_INTERVAL_S", "MODBUS_IO_DEBOUNCE_SWITCH_MS", 
+        "MODBUS_IO_DEBOUNCE_BUTTON_MS", "MODBUS_IO_SLAVES", "MODBUS_IO_CHANNELS_PER_SLAVE", 
+        "MODBUS_IO_NAME_PREFIX", "MODBUS_IO_DEFAULT_TYPE", "MODBUS_IO_BUTTONS",
     ]
     values = {k: os.getenv(k, "") for k in keys}
     return render_template("env.html", values=values, title="Nastavení (.env)")
@@ -249,16 +312,72 @@ def logout():
 @app.route("/network", methods=["GET", "POST"])
 @login_required
 def network():
+    import ipaddress
+
+    def _get(r, key, default=None):
+        # podporuje dict i objekt
+        if isinstance(r, dict):
+            return r.get(key, default)
+        return getattr(r, key, default)
+
+    def _set(r, key, value):
+        if isinstance(r, dict):
+            r[key] = value
+        else:
+            setattr(r, key, value)
+
+    def _is_private_target(target: str) -> bool:
+        """
+        True pro private/LAN/CGNAT:
+          - RFC1918: 10/8, 172.16/12, 192.168/16
+          - CGNAT: 100.64/10
+        Pro hostname vrátí False (nezjišťujeme DNS).
+        """
+        if not target:
+            return False
+        t = str(target).strip()
+
+        try:
+            ip = ipaddress.ip_address(t)
+        except ValueError:
+            return False
+
+        if ip.is_private:
+            return True
+
+        cgnat = ipaddress.ip_network("100.64.0.0/10")
+        return ip in cgnat
+
+    def _latency_key(r) -> float:
+        """
+        Řadí podle avg_time_ms jako čísla.
+        Pokud není k dispozici (None/nelze převést), jde na konec.
+        """
+        v = _get(r, "avg_time_ms", None)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float("inf")
+
     ping_results = []
     iperf_result = None
     default_targets = "8.8.8.8, 192.168.1.1, 192.168.1.9, 192.168.1.10, 192.168.1.20"
 
     if request.method == "POST":
         action = request.form.get("action")
+
         if action == "ping":
             targets = request.form.get("targets", default_targets)
             ip_list = [ip.strip() for ip in targets.split(",") if ip.strip()]
             ping_results = get_multi_ping_stats(ip_list)
+
+            # doplň flag is_private
+            for r in ping_results:
+                _set(r, "is_private", _is_private_target(_get(r, "target", "")))
+
+            # seřaď dle latence (None/chyby dozadu)
+            ping_results.sort(key=_latency_key)
+
         elif action == "iperf":
             iperf_ip = request.form.get("iperf_ip", "192.168.1.20")
             duration = int(request.form.get("duration", 10))
@@ -269,8 +388,11 @@ def network():
         ping_results=ping_results,
         iperf_result=iperf_result,
         default_targets=default_targets,
+        iperf_ip=request.form.get("iperf_ip", "192.168.1.20") if request.method == "POST" else "192.168.1.20",
+        duration=request.form.get("duration", 10) if request.method == "POST" else 10,
         title="Síťové testy",
     )
+
 
 # ---------- LOGS + METRIKY ----------
 

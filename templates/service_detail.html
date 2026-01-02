@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+
+  {% set s = (state or '')|lower %}
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h2 class="mb-1">Detail služby</h2>
+      <div class="text-muted">
+        <code>{{ pretty_name }}</code>
+        {% if unit %}<span class="ms-2">(<code>{{ unit }}</code>)</span>{% endif %}
+
+        {% if state %}
+          {% if 'active' in s or 'running' in s %}
+            <span class="badge bg-success ms-2">
+              <i class="bi bi-check-circle me-1"></i>{{ state }}
+            </span>
+          {% elif 'failed' in s %}
+            <span class="badge bg-danger ms-2">
+              <i class="bi bi-x-octagon me-1"></i>{{ state }}
+            </span>
+          {% elif 'inactive' in s or 'dead' in s %}
+            <span class="badge bg-secondary ms-2">
+              <i class="bi bi-pause-circle me-1"></i>{{ state }}
+            </span>
+          {% elif 'activating' in s %}
+            <span class="badge bg-warning text-dark ms-2">
+              <i class="bi bi-hourglass-split me-1"></i>{{ state }}
+            </span>
+          {% else %}
+            <span class="badge bg-secondary ms-2">
+              <i class="bi bi-question-circle me-1"></i>{{ state }}
+            </span>
+          {% endif %}
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('services_page') }}">
+        <i class="bi bi-arrow-left me-1"></i>Zpět
+      </a>
+
+      {% if state and ('active' in s or 'running' in s) %}
+        <form method="post"
+              action="{{ url_for('stop_service', service=pretty_name) }}"
+              class="d-inline"
+              onsubmit="return confirm('Zastavit službu {{ pretty_name }}?');">
+          <button type="submit" class="btn btn-sm btn-outline-warning">
+            <i class="bi bi-stop-circle me-1"></i>Stop
+          </button>
+        </form>
+      {% else %}
+        <form method="post"
+              action="{{ url_for('start_service', service=pretty_name) }}"
+              class="d-inline"
+              onsubmit="return confirm('Spustit službu {{ pretty_name }}?');">
+          <button type="submit" class="btn btn-sm btn-outline-success">
+            <i class="bi bi-play-circle me-1"></i>Start
+          </button>
+        </form>
+      {% endif %}
+
+      <form method="post"
+            action="{{ url_for('restart', service=pretty_name) }}"
+            class="d-inline"
+            onsubmit="return confirm('Restartovat službu {{ pretty_name }}?');">
+        <button type="submit" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-arrow-repeat me-1"></i>Restart
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <strong>systemctl status</strong>
+          <span class="text-muted small">--no-pager --full</span>
+        </div>
+        <div class="card-body">
+          <pre class="mb-0" style="white-space: pre-wrap;">{{ status_out }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <strong>journalctl</strong>
+          <div class="d-flex gap-2 align-items-center">
+            <span class="text-muted small">posledních {{ journal_lines }} řádků</span>
+
+            <a class="btn btn-sm btn-outline-secondary"
+               href="{{ url_for('service_detail', pretty_name=pretty_name, n=journal_lines) }}"
+               data-bs-toggle="tooltip"
+               title="Obnovit">
+              <i class="bi bi-arrow-clockwise"></i>
+            </a>
+
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                      type="button"
+                      data-bs-toggle="dropdown">
+                Řádky
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                {% for n in [50,100,200,500,1000] %}
+                  <li>
+                    <a class="dropdown-item"
+                       href="{{ url_for('service_detail', pretty_name=pretty_name, n=n) }}">
+                      {{ n }}
+                    </a>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <pre class="mb-0" style="white-space: pre-wrap;">{{ journal_out }}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

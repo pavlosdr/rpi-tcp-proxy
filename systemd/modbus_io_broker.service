@@ -4,13 +4,17 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
 User=pi
 Group=pi
-ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/modbus_io_broker.py
 WorkingDirectory=/opt/rpi-admin-ui
-Restart=always
-RestartSec=3
+EnvironmentFile=/opt/rpi-admin-ui/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/modbus_io_broker.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Type=simple
 
 [Install]
 WantedBy=multi-user.target

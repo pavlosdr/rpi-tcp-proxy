@@ -4,12 +4,15 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+User=root
+WorkingDirectory=/opt/rpi-admin-ui
+EnvironmentFile=/opt/rpi-admin-ui/.env
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/modbus_tcp_proxy.py
-WorkingDirectory=/opt/rpi-admin-ui
 Restart=on-failure
 RestartSec=5
-User=root
+Type=simple
+
 # --- log file preparation ---
 PermissionsStartOnly=true
 ExecStartPre=/bin/mkdir -p /var/log

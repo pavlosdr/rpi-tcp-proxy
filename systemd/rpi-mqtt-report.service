@@ -4,14 +4,17 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/mqtt_report.py
+User=pi
+Group=pi
 WorkingDirectory=/opt/rpi-admin-ui
+EnvironmentFile=/opt/rpi-admin-ui/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/mqtt_report.py
 Restart=on-failure
 RestartSec=5
-User=pi
-Environment=PYTHONUNBUFFERED=1
 StandardOutput=journal
 StandardError=journal
+Type=simple
 
 [Install]
 WantedBy=multi-user.target

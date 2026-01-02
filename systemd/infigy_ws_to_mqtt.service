@@ -4,15 +4,17 @@ After=network-online.target mosquitto.service
 Wants=network-online.target
 
 [Service]
-Environment=PYTHONUNBUFFERED=1
-Type=simple
+User=pi
+Group=pi
 WorkingDirectory=/opt/rpi-admin-ui
+EnvironmentFile=/opt/rpi-admin-ui/.env
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /opt/rpi-admin-ui/infigy_ws_to_mqtt.py
-Restart=always
+Restart=on-failure
 RestartSec=5
-# Volitelně: smysluplný limit logů
 StandardOutput=journal
 StandardError=journal
+Type=simple
 
 [Install]
 WantedBy=multi-user.target

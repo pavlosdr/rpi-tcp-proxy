@@ -7,7 +7,9 @@ Modbus IO broker pro vypínače / tlačítka
 
 import time
 import logging
-from typing import Dict, List
+import os
+from typing import Set, Tuple, Dict, Any, Optional
+from dotenv import load_dotenv
 
 try:
     # pymodbus 3.x
@@ -16,92 +18,178 @@ except ImportError:
     # pymodbus 2.x (Debian/RPi OS často)
     from pymodbus.client.sync import ModbusSerialClient
 
-from pymodbus.exceptions import ModbusException
 import paho.mqtt.client as mqtt
 
+# ---------------------- KONFIGURACE ---------------------- #
 
-# ------------- KONFIGURACE ------------- #
+# ------------------------ .env ----------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path=ENV_PATH)
 
-# MQTT broker – uprav podle své sítě
-MQTT_HOST = "192.168.1.20"  # IP/hostname, kde běží MQTT (core-mosquitto/HA)
-MQTT_PORT = 1883
-MQTT_USERNAME = "MQTT_bridge"        # nebo "mqtt_user"
-MQTT_PASSWORD = "mqtt_bridge_2091"  # nebo "mqtt_pass"
-MQTT_CLIENT_ID = "modbus-io-broker-rpi3"
+# ----------------- Helpery pro čtení .env  ----------------
+def env_str(key: str, default: str = "") -> str:
+    v = os.getenv(key)
+    return v.strip() if v is not None and str(v).strip() != "" else default
 
-# Základní prefix pro topic
+def env_int(key: str, default: int) -> int:
+    v = env_str(key, "")
+    return int(v) if v else default
+
+def env_float(key: str, default: float) -> float:
+    v = env_str(key, "")
+    return float(v) if v else default
+
+def env_bool(key: str, default: bool = False) -> bool:
+    v = env_str(key, "")
+    if not v:
+        return default
+    return v.lower() in ("1", "true", "yes", "on")
+# ------------------- Konfig z .env ------------------------
+MODBUS_IO_ENABLED = env_bool("MODBUS_IO_ENABLED", True)
+# MQTT broker
+MQTT_HOST = env_str("MODBUS_IO_MQTT_HOST", "192.168.1.20") # IP, kde běží MQTT (core-mosquitto/HA)
+MQTT_PORT = env_int("MODBUS_IO_MQTT_PORT", 1883)
+MQTT_USERNAME = env_str("MODBUS_IO_MQTT_USERNAME", "")
+MQTT_PASSWORD = env_str("MODBUS_IO_MQTT_PASSWORD", "")
+MQTT_CLIENT_ID = env_str("MODBUS_IO_MQTT_CLIENT_ID", "modbus-io-broker-rpi3")
+MQTT_BASE_TOPIC = env_str("MODBUS_IO_MQTT_BASE_TOPIC", "modbus_io")
 # Výsledný topic pak bude např.: modbus_io/obyvak_sw1/in1
-MQTT_BASE_TOPIC = "modbus_io"
-
+MQTT_TOPIC_STATE = f"{MQTT_BASE_TOPIC}/state"
+MQTT_TOPIC_EVENT = f"{MQTT_BASE_TOPIC}/event"
+MQTT_TOPIC_STATUS = f"{MQTT_BASE_TOPIC}/status"
 # Modbus RTU parametry – RS485 převodník na RPi3
-# MODBUS_PORT = "/dev/ttyUSB0" <<< nahrazeno přesnou cestou (výstup po zadání: ls -l /dev/serial/by-id/)
-#  >>> nehrozí změna ttyUSBx při přidání jiného zařízení USB
-MODBUS_PORT = "/dev/serial/by-id/usb-1a86_USB2.0-Ser_-if00-port0"
-MODBUS_BAUDRATE = 9600
-MODBUS_PARITY = "N"      # 'N', 'E', 'O'
-MODBUS_STOPBITS = 1
-MODBUS_BYTESIZE = 8
-MODBUS_TIMEOUT = 0.5     # v sekundách timeout na odpověď slave
-POLL_INTERVAL = 0.03     # 30ms mezi dotazy na sběrnici
+# MODBUS_PORT = "/dev/ttyUSB0" <<< nahrazeno přesnou cestou 
+# (výstup po zadání: ls -l /dev/serial/by-id/)
+#  >>> nehrozí změna ttyUSBx při přidání jiného zařízení USB: 
+# /dev/serial/by-id/usb-1a86_USB2.0-Ser_-if00-port0
+MODBUS_PORT = env_str("MODBUS_IO_MODBUS_PORT", "/dev/ttyUSB0")
+MODBUS_BAUDRATE = env_int("MODBUS_IO_MODBUS_BAUDRATE", 9600)
+MODBUS_PARITY = env_str("MODBUS_IO_MODBUS_PARITY", "N")
+MODBUS_STOPBITS = env_int("MODBUS_IO_MODBUS_STOPBITS", 1)
+MODBUS_BYTESIZE = env_int("MODBUS_IO_MODBUS_BYTESIZE", 8)
+MODBUS_TIMEOUT = env_float("MODBUS_IO_MODBUS_TIMEOUT", 0.5) # v sekundách timeout na odpověď slave
+# ------------------- Konfig z .env ------------------------
+# ------------------- INPUT TIMING -------------------------
+# Round-robin interval mezi dotazy na sběrnici běžně 30 ms
+POLL_INTERVAL_S = env_float("MODBUS_IO_POLL_INTERVAL_S", 0.03) 
+DEBOUNCE_SWITCH_MS = env_int("MODBUS_IO_DEBOUNCE_SWITCH_MS", 60)
+DEBOUNCE_BUTTON_MS = env_int("MODBUS_IO_DEBOUNCE_BUTTON_MS", 15)
 
-# ------------ INPUT TIMING ------------
-DEBOUNCE_MS = 40
-DOUBLE_CLICK_MS = 400
-LONG_PRESS_MS = 700
-# pro případ, že některé kanály jsou "aktivní LOW"
-# True = bit 1 znamená stisk/sepnuto, False = bit 0 znamená stisk/sepnuto
-DEFAULT_ACTIVE_HIGH = True
-
+DEFAULT_ACTIVE_HIGH = True  # True = stisk/sepnuto je logická 1
+CHANNELS_PER_SLAVE = env_int("MODBUS_IO_CHANNELS_PER_SLAVE", 6)
+# --------------- Generování INPUTS z .env -----------------
 # Definice IO modulů na sběrnici
-# - unit_id = Modbus adresa zařízení (1–247)
-# - name = logický název (pro MQTT topic)
-# - inputs = kolik DI kanálů skutečně používáš (max 8)
-MODBUS_MODULES = [
-    {
-        "unit_id": 128,
-        "name": "test_sw1",
-        "inputs": 2,   # např. vypínač se 2 tlačítky
-    },
-    {
-        "unit_id": 129,
-        "name": "test_sw2",
-        "inputs": 1,
-    },
-    {
-        "unit_id": 130,
-        "name": "test_sw3",
-        "inputs": 1,
-    },
-    # další moduly podle potřeby...
-]
+def parse_slave_list(s: str) -> list[int]:
+    return [int(x.strip()) for x in s.split(",") if x.strip()]
 
-# Logování
+def parse_pairs_csv(s: str) -> Set[Tuple[int, int]]:
+    res: Set[Tuple[int, int]] = set()
+    if not s:
+        return res
+    # odstranění případných komentářů / nových řádků
+    s = s.split("#", 1)[0].strip()
+
+    for item in s.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            logger.warning(f"Invalid MODBUS_IO_BUTTONS item '{item}' (expected slave:channel)")
+            continue
+        a, b = item.split(":", 1)
+        try:
+            res.add((int(a.strip()), int(b.strip())))
+        except ValueError:
+            logger.warning(f"Invalid MODBUS_IO_BUTTONS item '{item}' (not integers)")
+    return res
+
+def build_inputs_from_env() -> Dict[int, Dict[int, Dict[str, Any]]]:
+    slaves = parse_slave_list(env_str("MODBUS_IO_SLAVES", ""))
+    channels = max(1, env_int("MODBUS_IO_CHANNELS_PER_SLAVE", 6))
+    prefix = env_str("MODBUS_IO_NAME_PREFIX", "modbus_io")
+    default_type = env_str("MODBUS_IO_DEFAULT_TYPE", "switch").lower()
+    if default_type not in ("switch", "button"):
+        default_type = "switch"
+
+    buttons = parse_pairs_csv(env_str("MODBUS_IO_BUTTONS", ""))
+
+    inputs: Dict[int, Dict[int, Dict[str, Any]]] = {}
+    for slave in slaves:
+        inputs[slave] = {}
+        for ch in range(channels):
+            name = f"{prefix}_{slave}_{ch}"
+            typ = default_type
+            if (slave, ch) in buttons:
+                typ = "button" if default_type == "switch" else "switch"
+            inputs[slave][ch] = {"name": name, "type": typ}
+    return inputs
+
+# ---------------------- Logging ---------------------------
 LOG_LEVEL = logging.INFO
-# -------------------------------------- #
-
-
 logging.basicConfig(
     level=LOG_LEVEL,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
-
 logger = logging.getLogger("modbus_io_broker")
+
+# --------------- Nastavení MODBUS vstupů ------------------
+INPUTS = build_inputs_from_env()
+if not INPUTS:
+    logger.warning("INPUTS is empty. Check MODBUS_IO_SLAVES in .env")
+if env_int("MODBUS_IO_CHANNELS_PER_SLAVE", 6) <= 0:
+    logger.warning("MODBUS_IO_CHANNELS_PER_SLAVE <= 0, forcing 6")
+
+# z INPUTS sestaví seznam unitů pro round-robin
+UNITS = sorted(INPUTS.keys())
+
+# -------------------- Helpery pro čas  --------------------
+def now_ms() -> int:
+    return int(time.monotonic() * 1000)
+# ----------------------------------------------------------
+class DebouncedInput:
+    """
+    Jednoduchý debounce: stabilní změna až po DEBOUNCE_MS.
+    """
+    def __init__(self, debounce_ms: int, initial: bool = False):
+        self.debounce_ms = debounce_ms
+        self.raw = initial
+        self.stable = initial
+        self.changed_at = now_ms()
+
+    def update(self, raw_value: bool, t_ms: int) -> Optional[bool]:
+        """
+        Vrátí novou stabilní hodnotu, pokud nastala stabilní změna.
+        Jinak None.
+        """
+        if raw_value != self.raw:
+            self.raw = raw_value
+            self.changed_at = t_ms
+
+        if self.stable != self.raw:
+            if (t_ms - self.changed_at) >= self.debounce_ms:
+                self.stable = self.raw
+                return self.stable
+
+        return None
 
 
 def create_mqtt_client() -> mqtt.Client:
     client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
-    client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    # jen pokud máš username (jinak některé brokery zbytečně řeší auth)
+    if MQTT_USERNAME:
+        client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
 
     # LWT - broker oznámí offline pokud proces spadne
-    client.will_set(f"{MQTT_BASE_TOPIC}/status", "offline", qos=1, retain=True)
+    client.will_set(MQTT_TOPIC_STATUS, "offline", qos=1, retain=True)
+    # auto reconnect backoff (sekundy)
+    client.reconnect_delay_set(min_delay=1, max_delay=30)
 
     def on_connect(c, userdata, flags, rc):
         if rc == 0:
             logger.info("MQTT: connected")
-            c.publish(f"{MQTT_BASE_TOPIC}/status", "online", qos=1, retain=True)
+            c.publish(MQTT_TOPIC_STATUS, "online", qos=1, retain=True)
         else:
             logger.error(f"MQTT: connect failed rc={rc}")
 
@@ -110,6 +198,7 @@ def create_mqtt_client() -> mqtt.Client:
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
+    # neblokující připojení; pokud broker není dostupný, paho bude zkoušet znovu
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
     return client
@@ -126,58 +215,109 @@ def create_modbus_client() -> ModbusSerialClient:
         timeout=MODBUS_TIMEOUT,
     )
     if client.connect():
-        logger.info("Modbus: connected")
+        logger.info("Modbus: connected (port opened)")
     else:
-        logger.error("Modbus: connect failed")
+        logger.error("Modbus: connect failed (cannot open port)")
     return client
 
 
-def publish_input_state(mqtt_client: mqtt.Client, module_name: str, idx: int, value: bool) -> None:
-    # topic: modbus_io/<module>/in1
-    topic = f"{MQTT_BASE_TOPIC}/{module_name}/in{idx+1}"
+def mqtt_publish_state(mqtt_client: mqtt.Client, name: str, value: bool) -> None:
+    topic = f"{MQTT_TOPIC_STATE}/{name}"
     payload = "ON" if value else "OFF"
     mqtt_client.publish(topic, payload, qos=1, retain=False)
 
 
-def poll_one(modbus_client, mqtt_client, prev, mod):
-    unit = mod["unit_id"]
-    name = mod["name"]
-    n_inputs = mod["inputs"]
-
-    rr = modbus_client.read_discrete_inputs(address=0, count=n_inputs, unit=unit)
-    if rr.isError():
-        logger.warning(f"Modbus read error unit={unit}: {rr}")
-        return
-
-    bits = list(rr.bits)[:n_inputs]
-
-    if unit not in prev:
-        prev[unit] = bits
-        return
-
-    for i in range(n_inputs):
-        if bool(bits[i]) != bool(prev[unit][i]):
-            new_val = bool(bits[i])
-            logger.info(f"Change: unit={unit} {name} in{i+1} -> {'ON' if new_val else 'OFF'}")
-            publish_input_state(mqtt_client, name, i, new_val)
-            prev[unit][i] = new_val
-
+def mqtt_publish_event(mqtt_client: mqtt.Client, name: str, event: str) -> None:
+    topic = f"{MQTT_TOPIC_EVENT}/{name}"
+    mqtt_client.publish(topic, event, qos=1, retain=False)
 
 def main():
     logger.info("Starting Modbus IO Broker")
 
+    if not MODBUS_IO_ENABLED:
+        logger.warning("MODBUS_IO_ENABLED=0 -> exiting")
+        return
+
     mqtt_client = create_mqtt_client()
     modbus_client = create_modbus_client()
-    prev_states: Dict[int, List[bool]] = {}
-    poll_idx = 0
+
+    # pokud MODBUS port nejde otevřít, zkus opakovaně
+    while True:
+        try:
+            if modbus_client.connect():
+                break
+        except Exception:
+            pass
+        logger.error("Modbus: connect failed, retry in 2s")
+        time.sleep(2)
+
+    # per input state
+    debouncers: Dict[str, DebouncedInput] = {}
+    stable_states: Dict[str, bool] = {}
+
+    if not UNITS:
+        logger.error("No MODBUS units configured (UNITS is empty). Exiting.")
+        return
+
+    # init helper
+    def ensure_channel(name: str, typ: str):
+        if name not in debouncers:
+            d = DEBOUNCE_BUTTON_MS if typ == "button" else DEBOUNCE_SWITCH_MS
+            debouncers[name] = DebouncedInput(d, initial=False)
+            stable_states[name] = False
+
+    unit_idx = 0
 
     try:
         while True:
-            mod = MODBUS_MODULES[poll_idx]
-            poll_idx = (poll_idx + 1) % len(MODBUS_MODULES)
+            t = now_ms()
+
+            # 1) read jednoho slave (round-robin)
+            unit = UNITS[unit_idx]
+            unit_idx = (unit_idx + 1) % len(UNITS)
 
             try:
-                poll_one(modbus_client, mqtt_client, prev_states, mod)
+                rr = modbus_client.read_discrete_inputs(address=0, count=CHANNELS_PER_SLAVE, unit=unit)  # FC02, addr 0
+                if rr.isError():
+                    logger.warning(f"Modbus read error unit={unit}: {rr}")
+                else:
+                    bits = list(getattr(rr, "bits", []))[:CHANNELS_PER_SLAVE]
+                    cfg_unit = INPUTS.get(unit, {})
+
+                    for ch in range(CHANNELS_PER_SLAVE):
+                        cfg = cfg_unit.get(ch)
+                        if not cfg:
+                            continue
+
+                        name = cfg["name"]
+                        typ = cfg["type"]
+                        active_high = cfg.get("active_high", DEFAULT_ACTIVE_HIGH)
+
+                        ensure_channel(name, typ)
+
+                        raw = bool(bits[ch]) if ch < len(bits) else False
+                        logical = raw if active_high else (not raw)
+
+                        new_stable = debouncers[name].update(logical, t)
+                        if new_stable is None:
+                            continue
+
+                        old = stable_states.get(name, False)
+                        stable_states[name] = new_stable
+
+                        if typ == "switch":
+                            logger.info(f"State: {name} -> {'ON' if new_stable else 'OFF'}")
+                            mqtt_publish_state(mqtt_client, name, new_stable)
+
+                        elif typ == "button":
+                            # jen hrany - press / release
+                            if (not old) and new_stable:
+                                logger.info(f"Event: {name} -> press")
+                                mqtt_publish_event(mqtt_client, name, "press")
+                            elif old and (not new_stable):
+                                logger.info(f"Event: {name} -> release")
+                                mqtt_publish_event(mqtt_client, name, "release")
+
             except Exception as e:
                 logger.exception(f"Polling exception: {e}")
                 try:
@@ -187,11 +327,11 @@ def main():
                 time.sleep(0.2)
                 try:
                     modbus_client.connect()
+                    logger.info("Modbus: reconnected")
                 except Exception:
-                    pass
+                    logger.exception("Modbus reconnect failed")
 
-            time.sleep(POLL_INTERVAL)
-
+            time.sleep(POLL_INTERVAL_S)
 
     except KeyboardInterrupt:
         logger.info("Stopping (Ctrl+C)")

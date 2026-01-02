@@ -1,51 +1,344 @@
 {% extends "base.html" %}
 {% block content %}
+<div class="container py-4">
 
-<h2>Rozšířené síťové testy</h2>
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">Síťové testy</h2>
+    <span class="text-muted small">Ping a iPerf3</span>
+  </div>
 
-<form method="post">
-  <fieldset>
-    <legend>Ping testy</legend>
-    <label for="targets">Zadejte IP adresy (oddělené čárkou):</label><br>
-    <input type="text" name="targets" id="targets" size="60" value="{{ default_targets }}"><br>
-    <button type="submit" name="action" value="ping">Spustit ping test</button>
-  </fieldset>
-  <br>
-  <fieldset>
-    <legend>iPerf3 test</legend>
-    <label for="iperf_ip">IP serveru:</label>
-    <input type="text" name="iperf_ip" id="iperf_ip" value="192.168.1.20">
-    <label for="duration">Délka (s):</label>
-    <input type="number" name="duration" id="duration" value="10" min="1" max="60">
-    <button type="submit" name="action" value="iperf">Spustit iPerf test</button>
-  </fieldset>
-</form>
+  <div class="alert alert-info d-flex align-items-start gap-2">
+    <div>
+      Zde můžeš spustit rychlé síťové testy: ping na více cílů a iPerf3 throughput test.
+      Pro ping zadej cíle oddělené čárkou.
+    </div>
+  </div>
 
-{% if ping_results %}
-<h3>Výsledky ping testu</h3>
-<table>
-  <tr><th>Cíl</th><th>Ztráta paketů</th><th>Průměrná doba (ms)</th><th>Chyba</th></tr>
-  {% for r in ping_results %}
-  <tr>
-    <td>{{ r.target }}</td>
-    <td>{{ r.loss if r.loss is not none else '–' }}%</td>
-    <td>{{ r.avg_time_ms if r.avg_time_ms is not none else '–' }}</td>
-    <td>{{ r.error if r.error else '' }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% endif %}
+  <form method="post" class="needs-validation" novalidate id="networkForm">
+    <input type="hidden" name="action" id="actionField" value="">
 
-{% if iperf_result %}
-<h3>Výsledek iPerf testu</h3>
-<p><strong>Server:</strong> {{ iperf_result.server }}</p>
-<pre>
-{% if iperf_result.error %}
-Chyba: {{ iperf_result.error }}
-{% else %}
-{{ iperf_result.summary }}
-{% endif %}
-</pre>
-{% endif %}
+    <div class="row g-4">
 
+      <!-- Ping -->
+      <div class="col-12 col-lg-6">
+        <div class="card shadow-sm h-100">
+          <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <strong>Ping testy</strong>
+            <i class="bi bi-question-circle-fill"
+               data-bs-toggle="tooltip"
+               title="Ping na více cílů. Cíle odděluj čárkou."></i>
+          </div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label for="targets" class="form-label">Cíle (IP / hostname)</label>
+              <input type="text"
+                     class="form-control"
+                     name="targets"
+                     id="targets"
+                     value="{{ default_targets }}"
+                     data-bs-toggle="tooltip"
+                     title="Např. 8.8.8.8, 192.168.1.1, homeassistant.local"
+                     required>
+              <div class="form-text">Odděl cíle čárkou. Doporučuji max. 10–15 cílů.</div>
+              <div class="invalid-feedback">Vyplň alespoň jeden cíl.</div>
+            </div>
+
+            <button type="button"
+                    class="btn btn-outline-primary"
+                    id="btnPing">
+              <span class="btn-label">
+                <i class="bi bi-broadcast me-1"></i>Spustit ping test
+              </span>
+              <span class="btn-loading d-none">
+                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                Probíhá…
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- iPerf -->
+      <div class="col-12 col-lg-6">
+        <div class="card shadow-sm h-100">
+          <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+            <strong>iPerf3 test</strong>
+            <i class="bi bi-question-circle-fill"
+               data-bs-toggle="tooltip"
+               title="Pro iPerf musí na cíli běžet iPerf3 server (iperf3 -s)."></i>
+          </div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-8">
+                <label for="iperf_ip" class="form-label">IP/hostname serveru</label>
+                <input type="text"
+                       class="form-control"
+                       name="iperf_ip"
+                       id="iperf_ip"
+                       value="{{ iperf_ip or '192.168.1.20' }}"
+                       data-bs-toggle="tooltip"
+                       title="Server, kde běží iperf3 -s"
+                       required>
+                <div class="invalid-feedback">Vyplň IP/hostname serveru.</div>
+              </div>
+
+              <div class="col-md-4">
+                <label for="duration" class="form-label">Délka (s)</label>
+                <input type="number"
+                       class="form-control"
+                       name="duration"
+                       id="duration"
+                       value="{{ duration or 10 }}"
+                       min="1" max="60"
+                       data-bs-toggle="tooltip"
+                       title="Délka testu v sekundách (1–60)."
+                       required>
+                <div class="invalid-feedback">Zadej 1–60.</div>
+              </div>
+            </div>
+
+            <div class="mt-3">
+              <button type="button"
+                      class="btn btn-outline-success"
+                      id="btnIperf">
+                <span class="btn-label">
+                  <i class="bi bi-speedometer2 me-1"></i>Spustit iPerf test
+                </span>
+                <span class="btn-loading d-none">
+                  <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Probíhá…
+                </span>
+              </button>
+            </div>
+
+            <div class="mt-3 text-muted small">
+              Tip: na serveru spusť <code>iperf3 -s</code>. Pro testy v LAN doporučuji 10–20 s.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </form>
+
+  <!-- Výsledky ping -->
+  {% if ping_results %}
+  <div class="card shadow-sm mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>Výsledky ping testu</strong>
+      <span class="text-muted small">{{ ping_results|length }} cílů (seřazeno dle latence)</span>
+    </div>
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="min-width: 220px;">Cíl</th>
+              <th style="min-width: 140px;">Ztráta paketů</th>
+              <th style="min-width: 160px;">Průměr (ms)</th>
+              <th>Chyba</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in ping_results %}
+              <tr>
+                <td>
+                  {% if r.is_private %}
+                    <code class="text-primary">{{ r.target }}</code>
+                  {% else %}
+                    <code>{{ r.target }}</code>
+                  {% endif %}
+                </td>
+
+                <td>
+                  {% if r.loss is not none %}
+                    {% if r.loss|float == 0 %}
+                      <span class="badge bg-success">0 %</span>
+                    {% elif r.loss|float < 10 %}
+                      <span class="badge bg-warning text-dark">{{ r.loss }} %</span>
+                    {% else %}
+                      <span class="badge bg-danger">{{ r.loss }} %</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted">–</span>
+                  {% endif %}
+                </td>
+
+                <td>
+                  {% if r.avg_time_ms is not none %}
+                    {{ "%.2f"|format(r.avg_time_ms) }}
+                  {% else %}
+                    <span class="text-muted">–</span>
+                  {% endif %}
+                </td>
+
+                <td class="small">
+                  {% if r.error %}
+                    <span class="text-danger">{{ r.error }}</span>
+                  {% else %}
+                    <span class="text-muted"></span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-3 text-muted small">
+        Tip: pokud vidíš ztráty nebo vysoký průměr, zkus pingnout i gateway a cílové zařízení zvlášť.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Výsledky iPerf -->
+  {% if iperf_result %}
+  <div class="card shadow-sm mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>Výsledek iPerf testu</strong>
+      <span class="text-muted small">server: <code>{{ iperf_result.server }}</code></span>
+    </div>
+    <div class="card-body">
+      {% if iperf_result.error %}
+        <div class="alert alert-danger mb-3">
+          <strong>Chyba:</strong> {{ iperf_result.error }}
+        </div>
+      {% else %}
+        <div class="alert alert-success mb-3">
+          Test proběhl úspěšně.
+        </div>
+      {% endif %}
+
+      <pre class="mb-0" style="white-space: pre-wrap;">{% if iperf_result.error %}Chyba: {{ iperf_result.error }}{% else %}{{ iperf_result.summary }}{% endif %}</pre>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- VNSTAT: Statistiky rozhraní (bez grafů) -->
+  <div class="card shadow-sm mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>Statistiky rozhraní (vnstat)</strong>
+      <span class="text-muted small">pouze provoz přes RPi</span>
+    </div>
+    <div class="card-body">
+
+      <div class="alert alert-secondary mb-3">
+        Tyto hodnoty ukazují množství dat, které prošlo přes síťová rozhraní Raspberry Pi (eth0/wlan0).
+        Nejde o měření „zatížení Wi-Fi“ v routeru, ale pouze o provoz generovaný nebo přeposílaný tímto RPi.
+      </div>
+
+      {% if vnstat_stats %}
+        {% for s in vnstat_stats %}
+          <div class="mb-4">
+            <div class="d-flex align-items-center justify-content-between">
+              <h5 class="mb-2">Rozhraní: <code>{{ s.interface }}</code></h5>
+            </div>
+
+            {% if s.error %}
+              <div class="alert alert-danger mb-0">Chyba: {{ s.error }}</div>
+            {% else %}
+              <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th style="min-width:120px;">Typ</th>
+                      <th style="min-width:140px;">RX</th>
+                      <th style="min-width:140px;">TX</th>
+                      <th style="min-width:140px;">Celkem</th>
+                      <th style="min-width:160px;">Rychlost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Dnes</td>
+                      <td>{{ s.rx_today }}</td>
+                      <td>{{ s.tx_today }}</td>
+                      <td>{{ s.total_today }}</td>
+                      <td>{{ s.rate_today }}</td>
+                    </tr>
+                    <tr>
+                      <td>Měsíc</td>
+                      <td>{{ s.rx_month }}</td>
+                      <td>{{ s.tx_month }}</td>
+                      <td>{{ s.total_month }}</td>
+                      <td>{{ s.rate_month }}</td>
+                    </tr>
+                    <tr>
+                      <td>Celkem</td>
+                      <td>{{ s.rx_total }}</td>
+                      <td>{{ s.tx_total }}</td>
+                      <td>{{ s.total_total }}</td>
+                      <td>–</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="text-muted">vnstat data nejsou k dispozici.</div>
+      {% endif %}
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+  (function () {
+    const form = document.getElementById('networkForm');
+    const actionField = document.getElementById('actionField');
+    const btnPing = document.getElementById('btnPing');
+    const btnIperf = document.getElementById('btnIperf');
+
+    function setLoading(btn, loading) {
+      const label = btn.querySelector('.btn-label');
+      const loadingEl = btn.querySelector('.btn-loading');
+      if (loading) {
+        if (label) label.classList.add('d-none');
+        if (loadingEl) loadingEl.classList.remove('d-none');
+      } else {
+        if (label) label.classList.remove('d-none');
+        if (loadingEl) loadingEl.classList.add('d-none');
+      }
+    }
+
+    function lockButtons(activeBtn) {
+      activeBtn.dataset.locked = "1";
+      activeBtn.classList.add('disabled');
+      activeBtn.setAttribute('aria-disabled', 'true');
+      activeBtn.style.pointerEvents = 'none';
+
+      const other = (activeBtn === btnPing) ? btnIperf : btnPing;
+      if (other) other.disabled = true;
+    }
+
+    function submitWithAction(action, activeBtn) {
+      if (!form.checkValidity()) {
+        form.classList.add('was-validated');
+        return;
+      }
+      form.classList.add('was-validated');
+
+      actionField.value = action;
+
+      setLoading(activeBtn, true);
+      lockButtons(activeBtn);
+
+      form.submit();
+    }
+
+    btnPing.addEventListener('click', function () {
+      if (btnPing.dataset.locked === "1") return;
+      submitWithAction('ping', btnPing);
+    });
+
+    btnIperf.addEventListener('click', function () {
+      if (btnIperf.dataset.locked === "1") return;
+      submitWithAction('iperf', btnIperf);
+    });
+  })();
+</script>
 {% endblock %}
