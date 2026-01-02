@@ -236,6 +236,10 @@ def show_env():
         "MODBUS_IO_POLL_INTERVAL_S", "MODBUS_IO_DEBOUNCE_SWITCH_MS", 
         "MODBUS_IO_DEBOUNCE_BUTTON_MS", "MODBUS_IO_SLAVES", "MODBUS_IO_CHANNELS_PER_SLAVE", 
         "MODBUS_IO_NAME_PREFIX", "MODBUS_IO_DEFAULT_TYPE", "MODBUS_IO_BUTTONS",
+        # RPi Modbus IO Broker: MQTT latency test (UI diagnostika) ---
+        "MODBUS_IO_MQTT_LATENCY_COUNT", "MODBUS_IO_MQTT_LATENCY_INTERVAL_MS",
+        "MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "MODBUS_IO_MQTT_LATENCY_TOPIC_PREFIX",
+        "MODBUS_IO_MQTT_LATENCY_OK_MS", "MODBUS_IO_MQTT_LATENCY_WARN_MS",
     ]
 
     if request.method == "POST":
@@ -291,6 +295,9 @@ def show_env():
         "MODBUS_IO_POLL_INTERVAL_S", "MODBUS_IO_DEBOUNCE_SWITCH_MS", 
         "MODBUS_IO_DEBOUNCE_BUTTON_MS", "MODBUS_IO_SLAVES", "MODBUS_IO_CHANNELS_PER_SLAVE", 
         "MODBUS_IO_NAME_PREFIX", "MODBUS_IO_DEFAULT_TYPE", "MODBUS_IO_BUTTONS",
+        "MODBUS_IO_MQTT_LATENCY_COUNT", "MODBUS_IO_MQTT_LATENCY_INTERVAL_MS",
+        "MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "MODBUS_IO_MQTT_LATENCY_TOPIC_PREFIX",
+        "MODBUS_IO_MQTT_LATENCY_OK_MS", "MODBUS_IO_MQTT_LATENCY_WARN_MS",
     ]
     values = {k: os.getenv(k, "") for k in keys}
     return render_template("env.html", values=values, title="Nastavení (.env)")
@@ -313,54 +320,89 @@ def logout():
 @login_required
 def network():
     import ipaddress
+    import os
 
-    def _get(r, key, default=None):
-        # podporuje dict i objekt
+    def _get_field(r, key, default=None):
+        # umí dict i objekt
         if isinstance(r, dict):
             return r.get(key, default)
         return getattr(r, key, default)
 
-    def _set(r, key, value):
+    def _set_field(r, key, value):
+        # umí dict i objekt
         if isinstance(r, dict):
             r[key] = value
         else:
             setattr(r, key, value)
 
     def _is_private_target(target: str) -> bool:
-        """
-        True pro private/LAN/CGNAT:
-          - RFC1918: 10/8, 172.16/12, 192.168/16
-          - CGNAT: 100.64/10
-        Pro hostname vrátí False (nezjišťujeme DNS).
-        """
         if not target:
             return False
-        t = str(target).strip()
-
+        t = target.strip()
         try:
             ip = ipaddress.ip_address(t)
         except ValueError:
             return False
-
         if ip.is_private:
             return True
-
         cgnat = ipaddress.ip_network("100.64.0.0/10")
         return ip in cgnat
 
     def _latency_key(r) -> float:
         """
-        Řadí podle avg_time_ms jako čísla.
-        Pokud není k dispozici (None/nelze převést), jde na konec.
+        řazení podle avg_time_ms
+        - None/nelze převést => inf (na konec)
+        - string číslo => float
         """
-        v = _get(r, "avg_time_ms", None)
+        v = _get_field(r, "avg_time_ms", None)
+        if v is None:
+            return float("inf")
         try:
             return float(v)
-        except (TypeError, ValueError):
+        except Exception:
             return float("inf")
+
+    def _semafor_from_latency(avg_ms, p95_ms, loss, ok_ms=30, warn_ms=80):
+        """
+        Jednoduchý semafor:
+          - bad: loss>0 nebo p95>=warn_ms nebo avg>=warn_ms
+          - warning: p95>=ok_ms nebo avg>=ok_ms
+          - ok: jinak
+        """
+        try:
+            loss_i = int(loss) if loss is not None else 0
+        except Exception:
+            loss_i = 0
+
+        def _to_float(x):
+            try:
+                return float(x) if x is not None else None
+            except Exception:
+                return None
+
+        a = _to_float(avg_ms)
+        p = _to_float(p95_ms)
+
+        if loss_i > 0:
+            return ("bad", "danger")
+
+        # když nemáme data, neumíme hodnotit
+        if a is None and p is None:
+            return ("unknown", "secondary")
+
+        # "bad"
+        if (p is not None and p >= warn_ms) or (a is not None and a >= warn_ms):
+            return ("bad", "danger")
+
+        # "warning"
+        if (p is not None and p >= ok_ms) or (a is not None and a >= ok_ms):
+            return ("warning", "warning")
+
+        return ("ok", "success")
 
     ping_results = []
     iperf_result = None
+    mqtt_latency = None  # posíláme do šablony
     default_targets = "8.8.8.8, 192.168.1.1, 192.168.1.9, 192.168.1.10, 192.168.1.20"
 
     if request.method == "POST":
@@ -371,11 +413,13 @@ def network():
             ip_list = [ip.strip() for ip in targets.split(",") if ip.strip()]
             ping_results = get_multi_ping_stats(ip_list)
 
-            # doplň flag is_private
             for r in ping_results:
-                _set(r, "is_private", _is_private_target(_get(r, "target", "")))
+                try:
+                    _set_field(r, "is_private", _is_private_target(_get_field(r, "target", "")))
+                except Exception:
+                    pass
 
-            # seřaď dle latence (None/chyby dozadu)
+            # seřazení podle latence
             ping_results.sort(key=_latency_key)
 
         elif action == "iperf":
@@ -383,10 +427,92 @@ def network():
             duration = int(request.form.get("duration", 10))
             iperf_result = get_iperf_test(iperf_ip, duration)
 
+        elif action == "mqtt_latency":
+            try:
+                # Použij MODBUS_IO_MQTT_* (správně)
+                host = os.getenv("MODBUS_IO_MQTT_HOST", "192.168.1.20")
+                port = int(os.getenv("MODBUS_IO_MQTT_PORT", "1883"))
+                user = os.getenv("MODBUS_IO_MQTT_USERNAME", "")
+                pwd  = os.getenv("MODBUS_IO_MQTT_PASSWORD", "")
+
+                # parametry testu (env nebo rozumné defaulty)
+                samples = int(os.getenv("MODBUS_IO_MQTT_LATENCY_COUNT", "10"))
+                interval_ms = int(os.getenv("MODBUS_IO_MQTT_LATENCY_INTERVAL_MS", "100"))
+                timeout_s = float(os.getenv("MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "2.0"))
+
+                # topic prefix (NE base_topic z brokeru; pro diagnostiku raději odděleně)
+                topic_prefix = os.getenv("MODBUS_IO_MQTT_LATENCY_TOPIC_PREFIX", "diag/mqtt_latency")
+
+                # limity pro semafor (ms) – můžeš pak přidat i do .env/UI
+                ok_ms = float(os.getenv("MODBUS_IO_MQTT_LATENCY_OK_MS", "30"))
+                warn_ms = float(os.getenv("MODBUS_IO_MQTT_LATENCY_WARN_MS", "80"))
+
+                result = get_mqtt_latency_test(
+                    host=host,
+                    port=port,
+                    username=user,
+                    password=pwd,
+                    samples=samples,
+                    interval_ms=interval_ms,
+                    timeout_s=timeout_s,
+                    topic_prefix=topic_prefix,
+                )
+
+                # když helper vrátí None/prázdno
+                if not result:
+                    mqtt_latency = {
+                        "error": "MQTT latency test nevrátil žádná data (None / prázdný výsledek).",
+                        "semafor": "unknown",
+                        "badge": "secondary",
+                        "sent": 0,
+                        "received": 0,
+                        "loss": "n/a",
+                        "min_ms": None,
+                        "avg_ms": None,
+                        "p95_ms": None,
+                        "max_ms": None,
+                        "ok_ms": ok_ms,
+                        "warn_ms": warn_ms,
+                        "details": [],
+                    }
+                else:
+                    # doplň semafor + badge, aby šablona fungovala
+                    sem, badge = _semafor_from_latency(
+                        result.get("avg_ms"),
+                        result.get("p95_ms"),
+                        result.get("loss"),
+                        ok_ms=ok_ms,
+                        warn_ms=warn_ms
+                    )
+                    result["semafor"] = sem
+                    result["badge"] = badge
+                    result["ok_ms"] = ok_ms
+                    result["warn_ms"] = warn_ms
+                    mqtt_latency = result
+
+            except Exception as e:
+                mqtt_latency = {
+                    "error": str(e),
+                    "semafor": "bad",
+                    "badge": "danger",
+                    "sent": 0,
+                    "received": 0,
+                    "loss": "n/a",
+                    "min_ms": None,
+                    "avg_ms": None,
+                    "p95_ms": None,
+                    "max_ms": None,
+                    "ok_ms": None,
+                    "warn_ms": None,
+                    "details": [],
+                }
+
     return render_template(
         "network.html",
         ping_results=ping_results,
         iperf_result=iperf_result,
+        mqtt_latency=mqtt_latency,
+        vnstat_stats=get_all_vnstat_stats(),  # tabulky vnstat na Network stránce
         default_targets=default_targets,
         iperf_ip=request.form.get("iperf_ip", "192.168.1.20") if request.method == "POST" else "192.168.1.20",
         duration=request.form.get("duration", 10) if request.method == "POST" else 10,

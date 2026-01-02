@@ -4,12 +4,12 @@
 
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h2 class="mb-0">Síťové testy</h2>
-    <span class="text-muted small">Ping a iPerf3</span>
+    <span class="text-muted small">Ping, iPerf3 a MQTT latency</span>
   </div>
 
   <div class="alert alert-info d-flex align-items-start gap-2">
     <div>
-      Zde můžeš spustit rychlé síťové testy: ping na více cílů a iPerf3 throughput test.
+      Zde můžeš spustit rychlé síťové testy: ping na více cílů, iPerf3 throughput test a MQTT latency test.
       Pro ping zadej cíle oddělené čárkou.
     </div>
   </div>
@@ -118,6 +118,33 @@
         </div>
       </div>
 
+      <!-- MQTT Latency -->
+      <div class="col-12">
+        <div class="card shadow-sm">
+          <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+            <strong>MQTT latency test</strong>
+            <i class="bi bi-question-circle-fill"
+              data-bs-toggle="tooltip"
+              title="Testuje publish -> broker -> receive do stejneho klienta. Bezi jen na vyzadani."></i>
+          </div>
+          <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div class="text-muted small">
+              Spustí N vzorků v intervalu. Nejde o throughput, ale o odezvu MQTT brokeru a sítě.
+            </div>
+
+            <button type="button" class="btn btn-outline-dark" id="btnMqttLatency">
+              <span class="btn-label">
+                <i class="bi bi-stopwatch me-1"></i>Spustit MQTT latency
+              </span>
+              <span class="btn-loading d-none">
+                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                Probíhá…
+              </span>
+            </button>
+          </div>
+        </div>
+      </div>
+
     </div>
   </form>
 
@@ -215,6 +242,52 @@
   </div>
   {% endif %}
 
+  <!-- Výsledky MQTT Latency -->
+  {% if mqtt_latency %}
+  <div class="card shadow-sm mt-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>Výsledek MQTT latency</strong>
+      {% if mqtt_latency.badge %}
+        <span class="badge bg-{{ mqtt_latency.badge }}">
+          {% if mqtt_latency.semafor == 'ok' %}OK{% elif mqtt_latency.semafor == 'warning' %}VAROVÁNÍ{% elif mqtt_latency.semafor == 'bad' %}ŠPATNÉ{% else %}NEZNÁMÉ{% endif %}
+        </span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if mqtt_latency.error %}
+        <div class="alert alert-danger mb-3">
+          <strong>Chyba:</strong> {{ mqtt_latency.error }}
+        </div>
+      {% else %}
+        <div class="row g-3">
+          <div class="col-12 col-lg-6">
+            <table class="table table-sm align-middle mb-0">
+              <tbody>
+                <tr><th style="width: 220px;">Odesláno / Přijato</th><td>{{ mqtt_latency.sent }} / {{ mqtt_latency.received }}</td></tr>
+                <tr><th>Ztráta</th><td>{{ mqtt_latency.loss }}</td></tr>
+                <tr>
+                  <th>Min / Avg / P95 / Max (ms)</th>
+                  <td>{{ mqtt_latency.min_ms }} / {{ mqtt_latency.avg_ms }} / {{ mqtt_latency.p95_ms }} / {{ mqtt_latency.max_ms }}</td>
+                </tr>
+                <tr><th>Limity (OK / VAROVÁNÍ ms)</th><td>{{ mqtt_latency.ok_ms }} / {{ mqtt_latency.warn_ms }}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="col-12 col-lg-6">
+            <div class="text-muted small mb-2">Detaily (prvních 20):</div>
+            <pre class="mb-0" style="white-space: pre-wrap;">
+{% for d in (mqtt_latency.details[:20] if mqtt_latency.details else []) %}
+seq={{ d.seq }} rtt_ms={{ d.rtt_ms }}
+{% endfor %}
+            </pre>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- VNSTAT: Statistiky rozhraní (bez grafů) -->
   <div class="card shadow-sm mt-4">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -225,7 +298,7 @@
 
       <div class="alert alert-secondary mb-3">
         Tyto hodnoty ukazují množství dat, které prošlo přes síťová rozhraní Raspberry Pi (eth0/wlan0).
-        Nejde o měření „zatížení Wi-Fi“ v routeru, ale pouze o provoz generovaný nebo přeposílaný tímto RPi.
+        Nejde o měření zatížení Wi-Fi v routeru, ale pouze o provoz generovaný nebo přeposílaný tímto RPi.
       </div>
 
       {% if vnstat_stats %}
@@ -292,6 +365,7 @@
     const actionField = document.getElementById('actionField');
     const btnPing = document.getElementById('btnPing');
     const btnIperf = document.getElementById('btnIperf');
+    const btnMqttLatency = document.getElementById('btnMqttLatency');
 
     function setLoading(btn, loading) {
       const label = btn.querySelector('.btn-label');
@@ -311,8 +385,9 @@
       activeBtn.setAttribute('aria-disabled', 'true');
       activeBtn.style.pointerEvents = 'none';
 
-      const other = (activeBtn === btnPing) ? btnIperf : btnPing;
-      if (other) other.disabled = true;
+      [btnPing, btnIperf, btnMqttLatency].forEach(b => {
+        if (b && b !== activeBtn) b.disabled = true;
+      });
     }
 
     function submitWithAction(action, activeBtn) {
@@ -339,6 +414,12 @@
       if (btnIperf.dataset.locked === "1") return;
       submitWithAction('iperf', btnIperf);
     });
+
+    btnMqttLatency.addEventListener('click', function () {
+      if (btnMqttLatency.dataset.locked === "1") return;
+      submitWithAction('mqtt_latency', btnMqttLatency);
+    });
+
   })();
 </script>
 {% endblock %}
