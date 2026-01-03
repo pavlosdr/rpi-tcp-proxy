@@ -85,6 +85,10 @@ DEBOUNCE_BUTTON_MS = env_int("MODBUS_IO_DEBOUNCE_BUTTON_MS", 15)
 
 DEFAULT_ACTIVE_HIGH = True  # True = stisk/sepnuto je logická 1
 CHANNELS_PER_SLAVE = env_int("MODBUS_IO_CHANNELS_PER_SLAVE", 6)
+
+HA_DISCOVERY = env_bool("MODBUS_IO_HA_DISCOVERY", True)
+HA_DISCOVERY_PREFIX = env_str("MODBUS_IO_HA_DISCOVERY_PREFIX", "homeassistant")
+BUTTON_HOLD_MS = env_int("MODBUS_IO_BUTTON_HOLD_MS", 600)
 # --------------- Generování INPUTS z .env -----------------
 # Definice IO modulů na sběrnici
 def parse_slave_list(s: str) -> list[int]:
@@ -121,16 +125,53 @@ def build_inputs_from_env() -> Dict[int, Dict[int, Dict[str, Any]]]:
 
     buttons = parse_pairs_csv(env_str("MODBUS_IO_BUTTONS", ""))
 
+    used = parse_used_channels(env_str("MODBUS_IO_USED_CHANNELS", ""))
+    use_filter = len(used) > 0  # když není vyplněno, chovej se jako dřív (všechny)
+
     inputs: Dict[int, Dict[int, Dict[str, Any]]] = {}
+
     for slave in slaves:
-        inputs[slave] = {}
+        unit_map: Dict[int, Dict[str, Any]] = {}
+
         for ch in range(channels):
+            if use_filter and (slave, ch) not in used:
+                continue  # <- klíčové: ignorujeme nepoužívané kanály
+
             name = f"{prefix}_{slave}_{ch}"
             typ = default_type
+            # původní logika: MODBUS_IO_BUTTONS přepíná typ oproti default
             if (slave, ch) in buttons:
                 typ = "button" if default_type == "switch" else "switch"
-            inputs[slave][ch] = {"name": name, "type": typ}
+
+            unit_map[ch] = {"name": name, "type": typ}
+
+        if unit_map:
+            inputs[slave] = unit_map
+
     return inputs
+
+def parse_used_channels(s: str) -> Set[Tuple[int, int]]:
+    """
+    MODBUS_IO_USED_CHANNELS="128:0,128:1,129:0,130:0"
+    Vrátí množinu (slave, ch).
+    """
+    res: Set[Tuple[int, int]] = set()
+    if not s:
+        return res
+    s = s.split("#", 1)[0].strip()
+    for item in s.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            logger.warning(f"Invalid MODBUS_IO_USED_CHANNELS item '{item}' (expected slave:channel)")
+            continue
+        a, b = item.split(":", 1)
+        try:
+            res.add((int(a.strip()), int(b.strip())))
+        except ValueError:
+            logger.warning(f"Invalid MODBUS_IO_USED_CHANNELS item '{item}' (not integers)")
+    return res
 
 # ---------------------- Logging ---------------------------
 # Log minimization
@@ -154,6 +195,16 @@ if env_int("MODBUS_IO_CHANNELS_PER_SLAVE", 6) <= 0:
 # z INPUTS sestaví seznam unitů pro round-robin
 UNITS = sorted(INPUTS.keys())
 
+# Helper na rozpad name modbus_io_128_0 -> (128,0)
+def parse_name_to_slave_ch(name: str) -> Optional[Tuple[int, int]]:
+    # očekává prefix_slave_channel
+    try:
+        parts = name.split("_")
+        slave = int(parts[-2])
+        ch = int(parts[-1])
+        return slave, ch
+    except Exception:
+        return None
 # -------------------- Helpery pro čas  --------------------
 def now_ms() -> int:
     return int(time.monotonic() * 1000)
@@ -184,6 +235,62 @@ class DebouncedInput:
 
         return None
 
+# ---------------------- Publish ---------------------------
+def publish_ha_discovery(mqtt_client: mqtt.Client) -> None:
+    if not HA_DISCOVERY:
+        return
+
+    device = {
+        "identifiers": ["modbus_io_rpi"],
+        "name": "Modbus IO – RPi",
+        "manufacturer": "PavlosDr",
+        "model": "RS485 Modbus IO",
+    }
+
+    for unit, chans in INPUTS.items():
+        for ch, cfg in chans.items():
+            enabled = cfg.get("enabled", True)
+            if not enabled:
+                continue
+            name = cfg["name"]
+            typ = cfg["type"]
+
+            # společné
+            avail = {
+                "availability_topic": MQTT_TOPIC_STATUS,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            }
+
+            if typ == "switch":
+                # binary_sensor (stav ON/OFF)
+                state_topic = f"{MQTT_TOPIC_STATE}/{unit}/{ch}"
+                discovery_topic = f"{HA_DISCOVERY_PREFIX}/binary_sensor/{name}/config"
+                payload = {
+                    "name": name,
+                    "unique_id": name,
+                    "state_topic": state_topic,
+                    "payload_on": "ON",
+                    "payload_off": "OFF",
+                    **avail,
+                    "device": device,
+                }
+                mqtt_client.publish(discovery_topic, json.dumps(payload), qos=1, retain=True)
+
+            elif typ == "button":
+                # tlačítko jako sensor action (press/release/hold)
+                # HA si to převedeš v automations podle hodnoty
+                event_topic = f"{MQTT_TOPIC_EVENT}/{unit}/{ch}"
+                discovery_topic = f"{HA_DISCOVERY_PREFIX}/sensor/{name}_action/config"
+                payload = {
+                    "name": f"{name}_action",
+                    "unique_id": f"{name}_action",
+                    "state_topic": event_topic,
+                    "icon": "mdi:gesture-tap",
+                    **avail,
+                    "device": device,
+                }
+                mqtt_client.publish(discovery_topic, json.dumps(payload), qos=1, retain=True)
 
 def create_mqtt_client() -> mqtt.Client:
     client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
@@ -200,6 +307,12 @@ def create_mqtt_client() -> mqtt.Client:
         if rc == 0:
             logger.info("MQTT: connected")
             c.publish(MQTT_TOPIC_STATUS, "online", qos=1, retain=True)
+
+            # autodiscovery po connectu
+            try:
+                publish_ha_discovery(c)
+            except Exception as e:
+                logger.warning(f"HA discovery publish failed: {e}")
         else:
             logger.error(f"MQTT: connect failed rc={rc}")
 
@@ -215,7 +328,7 @@ def create_mqtt_client() -> mqtt.Client:
 
 
 def create_modbus_client() -> ModbusSerialClient:
-    client = ModbusSerialClient(
+    return ModbusSerialClient(
         method="rtu",
         port=MODBUS_PORT,
         baudrate=MODBUS_BAUDRATE,
@@ -224,22 +337,29 @@ def create_modbus_client() -> ModbusSerialClient:
         bytesize=MODBUS_BYTESIZE,
         timeout=MODBUS_TIMEOUT,
     )
-    if client.connect():
-        logger.info("Modbus: connected (port opened)")
-    else:
-        logger.error("Modbus: connect failed (cannot open port)")
-    return client
-
 
 def mqtt_publish_state(mqtt_client: mqtt.Client, name: str, value: bool) -> None:
-    topic = f"{MQTT_TOPIC_STATE}/{name}"
+    parsed = parse_name_to_slave_ch(name)
+    if not parsed:
+        return
+    slave, ch = parsed
+    topic = f"{MQTT_TOPIC_STATE}/{slave}/{ch}"
     payload = "ON" if value else "OFF"
+
+    # doporučuji retain=True pro "state" (HA po restartu hned ví poslední stav)
     mqtt_client.publish(topic, payload, qos=1, retain=True)
 
 
 def mqtt_publish_event(mqtt_client: mqtt.Client, name: str, event: str) -> None:
-    topic = f"{MQTT_TOPIC_EVENT}/{name}"
-    mqtt_client.publish(topic, event, qos=1, retain=False)
+    parsed = parse_name_to_slave_ch(name)
+    if not parsed:
+        return
+    slave, ch = parsed
+    topic = f"{MQTT_TOPIC_EVENT}/{slave}/{ch}"
+
+    # eventy NEretainovat
+    mqtt_client.publish(topic, event, qos=0, retain=False)
+
 
 def main():
     logger.info("Starting Modbus IO Broker")
@@ -251,10 +371,13 @@ def main():
     mqtt_client = create_mqtt_client()
     modbus_client = create_modbus_client()
 
+    press_started_at: Dict[str, int] = {}
+
     # pokud MODBUS port nejde otevřít, zkus opakovaně
     while True:
         try:
             if modbus_client.connect():
+                logger.info("Modbus: connected (port opened)")
                 break
         except Exception:
             pass
@@ -282,7 +405,6 @@ def main():
     unit_err_state: Dict[int, Dict[str, Any]] = {}  # {unit: {"in_error": bool, "count": int}}
 
     # --- startup publish state ---
-    # posíláme jen switch stavy, tlačítka ne (aby nevznikaly fake eventy)
     published_states: Dict[str, bool] = {}  # name -> last published
     pending_units = set(UNITS)              # které unity jsme ještě po startu nenačetli OK
     startup_done = False
@@ -298,7 +420,7 @@ def main():
             try:
                 rr = modbus_client.read_discrete_inputs(
                     address=0, count=CHANNELS_PER_SLAVE, unit=unit
-                )  # FC02, addr 0
+                )
 
                 st = unit_err_state.get(unit)
                 if st is None:
@@ -310,8 +432,8 @@ def main():
                     if not st["in_error"]:
                         st["in_error"] = True
                         logger.warning(f"Modbus read error unit={unit}: {rr}")
-
-                    time.sleep(POLL_INTERVAL_S)
+                    # další chyby už netiskneme (ticho)
+                    # POZOR: tady už nespíme, sleep je na konci smyčky
                     continue
 
                 # OK: pokud jsme byli v chybě, zaloguj recovered 1×
@@ -320,6 +442,7 @@ def main():
                     logger.info(f"Modbus unit={unit} recovered (errors={st['count']})")
                     st["count"] = 0
 
+                # >>> TADY byla chyba: tenhle blok musí být mimo if st["in_error"] <<<
                 bits = list(getattr(rr, "bits", []))[:CHANNELS_PER_SLAVE]
                 cfg_unit = INPUTS.get(unit, {})
 
@@ -329,6 +452,8 @@ def main():
                 for ch in range(CHANNELS_PER_SLAVE):
                     cfg = cfg_unit.get(ch)
                     if not cfg:
+                        continue
+                    if not cfg.get("enabled", True):
                         continue
 
                     name = cfg["name"]
@@ -352,7 +477,6 @@ def main():
                     stable_states[name] = new_stable
 
                     if typ == "switch":
-                        # publish jen když se stav změnil (nebo ještě nebyl publishnut)
                         prev_pub = published_states.get(name, None)
                         if prev_pub is None or prev_pub != new_stable:
                             logger.info(f"State: {name} -> {'ON' if new_stable else 'OFF'}")
@@ -360,21 +484,22 @@ def main():
                             published_states[name] = new_stable
 
                     elif typ == "button":
-                        # jen hrany - press / release
                         if (not old) and new_stable:
-                            logger.info(f"Event: {name} -> press")
+                            press_started_at[name] = t
                             mqtt_publish_event(mqtt_client, name, "press")
+
                         elif old and (not new_stable):
-                            logger.info(f"Event: {name} -> release")
-                            mqtt_publish_event(mqtt_client, name, "release")
+                            t0 = press_started_at.pop(name, None)
+                            if t0 is not None and (t - t0) >= BUTTON_HOLD_MS:
+                                mqtt_publish_event(mqtt_client, name, "hold")
+                            else:
+                                mqtt_publish_event(mqtt_client, name, "release")
 
                 # ---- Startup publish: po prvním OK čtení unity ----
                 if not startup_done and unit in pending_units:
-                    # publishni snapshot switchů pro tuto unit (pokud ještě nebyly poslané)
                     for name, stval in startup_snapshot.items():
                         prev_pub = published_states.get(name, None)
                         if prev_pub is None:
-                            # tady publishujeme bez "State:" logu pro každou položku (ať to nezahlcuje)
                             mqtt_publish_state(mqtt_client, name, stval)
                             published_states[name] = stval
 
