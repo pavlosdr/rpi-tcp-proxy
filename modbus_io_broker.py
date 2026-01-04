@@ -88,7 +88,6 @@ CHANNELS_PER_SLAVE = env_int("MODBUS_IO_CHANNELS_PER_SLAVE", 6)
 
 HA_DISCOVERY = env_bool("MODBUS_IO_HA_DISCOVERY", True)
 HA_DISCOVERY_PREFIX = env_str("MODBUS_IO_HA_DISCOVERY_PREFIX", "homeassistant")
-BUTTON_HOLD_MS = env_int("MODBUS_IO_BUTTON_HOLD_MS", 600)
 # --------------- Generování INPUTS z .env -----------------
 # Definice IO modulů na sběrnici
 def parse_slave_list(s: str) -> list[int]:
@@ -278,7 +277,7 @@ def publish_ha_discovery(mqtt_client: mqtt.Client) -> None:
                 mqtt_client.publish(discovery_topic, json.dumps(payload), qos=1, retain=True)
 
             elif typ == "button":
-                # tlačítko jako sensor action (press/release/hold)
+                # tlačítko jako sensor action (press/release)
                 # HA si to převedeš v automations podle hodnoty
                 event_topic = f"{MQTT_TOPIC_EVENT}/{unit}/{ch}"
                 discovery_topic = f"{HA_DISCOVERY_PREFIX}/sensor/{name}_action/config"
@@ -287,6 +286,7 @@ def publish_ha_discovery(mqtt_client: mqtt.Client) -> None:
                     "unique_id": f"{name}_action",
                     "state_topic": event_topic,
                     "icon": "mdi:gesture-tap",
+                    "force_update": True,          # ať HA vezme i opakované stejné hodnoty
                     **avail,
                     "device": device,
                 }
@@ -370,8 +370,6 @@ def main():
 
     mqtt_client = create_mqtt_client()
     modbus_client = create_modbus_client()
-
-    press_started_at: Dict[str, int] = {}
 
     # pokud MODBUS port nejde otevřít, zkus opakovaně
     while True:
@@ -485,15 +483,10 @@ def main():
 
                     elif typ == "button":
                         if (not old) and new_stable:
-                            press_started_at[name] = t
                             mqtt_publish_event(mqtt_client, name, "press")
 
                         elif old and (not new_stable):
-                            t0 = press_started_at.pop(name, None)
-                            if t0 is not None and (t - t0) >= BUTTON_HOLD_MS:
-                                mqtt_publish_event(mqtt_client, name, "hold")
-                            else:
-                                mqtt_publish_event(mqtt_client, name, "release")
+                            mqtt_publish_event(mqtt_client, name, "release")
 
                 # ---- Startup publish: po prvním OK čtení unity ----
                 if not startup_done and unit in pending_units:
