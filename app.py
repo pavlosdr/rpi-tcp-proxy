@@ -4,11 +4,15 @@ from dotenv import load_dotenv
 import os
 import io
 import re
-import time
+import logging
+import sys
 import datetime as dt
 from collections import defaultdict, deque
-from typing import Optional  # pro kompatibilitu s Python <3.10
-
+from typing import Optional
+from mqtt_tools import (
+    mqtt_list_retained_discovery, 
+    mqtt_delete_retained, 
+)
 from auth import login_required, check_credentials
 from monitor import (
     get_system_info,
@@ -30,6 +34,23 @@ ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
 app = Flask(__name__)
+# --- force logs to journald (stdout) ---
+root = logging.getLogger()
+root.handlers.clear()
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+root.addHandler(handler)
+root.setLevel(logging.INFO)
+
+# Flask app logger
+app.logger.handlers.clear()
+app.logger.propagate = True
+app.logger.setLevel(logging.INFO)
+
+# Werkzeug (HTTP access + errors)
+logging.getLogger("werkzeug").setLevel(logging.INFO)
+
 app.secret_key = os.getenv("UI_SECRET", "change-me")
 
 # ---------- Pomocné ----------
@@ -562,6 +583,65 @@ def network():
         title="Síťové testy",
     )
 
+@app.route("/service", methods=["GET"])
+@login_required
+def service_page():
+    return render_template("service.html", title="Servis")
+
+@app.route("/mqtt-discovery", methods=["GET", "POST"])
+@login_required
+def mqtt_discovery():
+    import os
+
+    host = os.getenv("MODBUS_IO_MQTT_HOST", "192.168.1.20")
+    port = int(os.getenv("MODBUS_IO_MQTT_PORT", "1883"))
+    user = os.getenv("MODBUS_IO_MQTT_USERNAME", "")
+    pwd  = os.getenv("MODBUS_IO_MQTT_PASSWORD", "")
+    prefix = os.getenv("MODBUS_IO_HA_DISCOVERY_PREFIX", "homeassistant")
+
+    items = []
+    result = None
+    error = None
+
+    if request.method == "POST":
+        app.logger.info("mqtt-discovery POST action=%s form=%s", request.form.get("action"), dict(request.form))
+        app.logger.info("mqtt-discovery env host=%s port=%s prefix=%s", host, port, prefix)
+        action = (request.form.get("action") or "").strip().lower()
+        # fallback: když template neposílá action, bereme POST jako "list"
+        if not action:
+            action = "list"
+        # UI používá scan => chovej se jako list
+        if action == "scan":
+            action = "list"    
+        try:
+            if action == "list":
+                items = mqtt_list_retained_discovery(
+                    host=host, port=port, username=user, password=pwd,
+                    discovery_prefix=prefix,
+                    contains = (request.form.get("contains") or "modbus_io").strip(),
+                    window_s = float(request.form.get("window_s") or 1.5),
+                    limit = int(request.form.get("limit") or 500),
+                )
+                app.logger.info("mqtt-discovery: loaded %s items", len(items))
+
+            elif action == "delete":
+                # textové pole: jeden topic na řádek
+                raw = request.form.get("delete_topics", "")
+                topics = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+                result = mqtt_delete_retained(
+                    host=host, port=port, username=user, password=pwd,
+                    topics=topics,
+                )
+        except Exception as e:
+            error = str(e)
+
+    return render_template(
+        "mqtt_discovery.html",
+        items=items,
+        result=result,
+        error=error,
+        title="MQTT Discovery – servis",
+    )
 
 # ---------- LOGS + METRIKY ----------
 

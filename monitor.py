@@ -1,6 +1,5 @@
 import subprocess
 import shutil
-import os
 import re
 
 SERVICES = {
@@ -251,7 +250,6 @@ def get_mqtt_latency_test(
     """
     import time
     import uuid
-    import statistics
     from threading import Event, Lock
     import paho.mqtt.client as mqtt
 
@@ -623,4 +621,3 @@ def get_modbus_rtt_test(
             client.close()
         except Exception:
             pass
-

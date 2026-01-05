@@ -72,6 +72,11 @@
             </a>
           </li>
 
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint in ['service_page', 'mqtt_discovery'] %}active{% endif %}"
+              href="{{ url_for('service_page') }}">
+             <i class="bi bi-tools me-1"></i>Servis
+          </li>
         </ul>
 
         <div class="d-flex">

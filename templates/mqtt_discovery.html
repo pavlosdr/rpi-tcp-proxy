@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">MQTT Discovery (retained)</h2>
+    <span class="text-muted small">čtení a mazání retained configů</span>
+  </div>
+
+  <div class="alert alert-warning">
+    Mazání discovery configů probíhá publishnutím <strong>NULL payloadu</strong> s <code>retain=true</code> na daný <code>.../config</code> topic.
+    Home Assistant se obvykle srovná během chvíle, případně pomůže reload MQTT integrace / restart HA.
+  </div>
+
+  {% if error %}
+    <div class="alert alert-danger">
+      <strong>Chyba:</strong> {{ error }}
+    </div>
+  {% endif %}
+
+  <!-- LOAD/LIST -->
+  <form method="post" class="mb-4">
+    <input type="hidden" name="action" value="list">
+
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-lg-auto">
+        <button class="btn btn-outline-primary" type="submit">
+          Načíst retained discovery configy
+        </button>
+      </div>
+
+      <div class="col-12 col-lg-auto">
+        <span class="text-muted small">MQTT: <code>{{ mqtt_host }}:{{ mqtt_port }}</code></span>
+      </div>
+
+      <div class="col-12 col-lg-3">
+        <label class="form-label mb-0 small text-muted">Contains (volitelné)</label>
+        <input type="text" class="form-control form-control-sm font-monospace"
+               name="contains"
+               value="{{ request.form.get('contains','modbus_io') if request and request.method=='POST' else 'modbus_io' }}"
+               placeholder="modbus_io">
+      </div>
+
+      <div class="col-6 col-lg-2">
+        <label class="form-label mb-0 small text-muted">Limit</label>
+        <input type="number" class="form-control form-control-sm"
+               name="limit"
+               value="{{ request.form.get('limit','500') if request and request.method=='POST' else '500' }}"
+               min="1" max="5000">
+      </div>
+
+      <div class="col-6 col-lg-2">
+        <label class="form-label mb-0 small text-muted">Window (s)</label>
+        <input type="number" class="form-control form-control-sm"
+               name="window_s"
+               value="{{ request.form.get('window_s','1.5') if request and request.method=='POST' else '1.5' }}"
+               min="0.2" max="10" step="0.1">
+      </div>
+    </div>
+
+    <div class="form-text">
+      Pokud nic nenajdeš, zkus zvýšit <code>Window</code> (např. 3–5 s) nebo dočasně vyprázdnit <code>Contains</code>.
+      (Backend musí tyto hodnoty číst z <code>request.form</code>; pokud ne, funguje to i bez toho.)
+    </div>
+  </form>
+
+  <!-- DELETE -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header">
+      <strong>Mazání dle seznamu topiců</strong>
+    </div>
+    <div class="card-body">
+
+      <div class="mb-2 text-muted small">
+        Vlož 1 topic na řádek (přímé topic stringy). Pro glob/DEVICE by backend musel dělat expanzi.
+        Mazání funguje tak, že se na topic publikuje <code>payload=None</code> s <code>retain=true</code>.
+      </div>
+
+      <form method="post">
+        <input type="hidden" name="action" value="delete">
+        <textarea class="form-control font-monospace"
+                  name="delete_topics"
+                  rows="7"
+                  placeholder="homeassistant/binary_sensor/modbus_io_128_2/config"></textarea>
+
+        <div class="mt-3 d-flex flex-wrap gap-2 align-items-center">
+          <button class="btn btn-outline-danger" type="submit"
+                  onclick="return confirm('Opravdu smazat zadané retained discovery configy?');">
+            Smazat
+          </button>
+          <div class="text-muted small">
+            Tip: nejdřív klikni na Načíst a zkopíruj topic(y) z tabulky.
+          </div>
+        </div>
+      </form>
+
+      {% if result %}
+        <hr>
+        <div class="mb-2"><strong>Výsledek mazání</strong></div>
+
+        <div class="d-flex flex-wrap gap-3">
+          <div>
+            <span class="text-muted small">Smazáno:</span>
+            <span class="badge bg-success">{{ result.deleted }}</span>
+          </div>
+
+          <div>
+            <span class="text-muted small">Chyby:</span>
+            {% if result.errors and result.errors|length > 0 %}
+              <span class="badge bg-danger">{{ result.errors|length }}</span>
+            {% else %}
+              <span class="badge bg-secondary">0</span>
+            {% endif %}
+          </div>
+        </div>
+
+        {% if result.errors and result.errors|length > 0 %}
+          <div class="mt-3">
+            <div class="text-muted small mb-1">Detaily chyb:</div>
+            <ul class="mb-0">
+              {% for e in result.errors %}
+                <li><code>{{ e }}</code></li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
+      {% endif %}
+
+    </div>
+  </div>
+
+  <!-- LIST OUTPUT -->
+  {% if items and items|length > 0 %}
+    <div class="card shadow-sm">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Retained discovery configy</strong>
+        <span class="text-muted small">{{ items|length }} zpráv</span>
+      </div>
+      <div class="card-body">
+        <div class="table-responsive">
+          <table class="table table-sm table-hover align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width:420px;">Topic</th>
+                <th style="min-width:110px;">Retain</th>
+                <th style="min-width:80px;">QoS</th>
+                <th>Payload</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in items %}
+                <tr>
+                  <td><code>{{ it.topic }}</code></td>
+                  <td>
+                    {% if it.retain %}
+                      <span class="badge bg-success">true</span>
+                    {% else %}
+                      <span class="badge bg-secondary">false</span>
+                    {% endif %}
+                  </td>
+                  <td><span class="badge bg-light text-dark">{{ it.qos }}</span></td>
+                  <td class="small">
+                    <pre class="mb-0" style="white-space: pre; overflow:auto; max-height: 220px;">{{ it.payload }}</pre>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    {% if request and request.method == "POST" and (request.form.get("action") in ["list","scan"]) %}
+      <div class="alert alert-secondary">
+        Nenalezeny žádné retained discovery configy pro zadané podmínky.
+      </div>
+    {% endif %}
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-4">
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">Servis</h2>
+    <span class="text-muted small">nástroje pro údržbu a diagnostiku</span>
+  </div>
+
+  <div class="row g-3">
+
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+          <strong>MQTT Discovery (retained)</strong>
+          <i class="bi bi-question-circle-fill"
+             data-bs-toggle="tooltip"
+             title="Zobrazení retained discovery configů (homeassistant/.../config) a jejich mazání publishnutím prázdného payloadu s retain=true."></i>
+        </div>
+        <div class="card-body">
+          <div class="text-muted small mb-3">
+            Zobrazí retained discovery konfigy a umožní je bezpečně mazat bez terminálu.
+          </div>
+          <a class="btn btn-outline-secondary"
+             href="{{ url_for('mqtt_discovery') }}">
+            <i class="bi bi-box-arrow-up-right me-1"></i>Otevřít
+          </a>
+        </div>
+      </div>
+    </div>
+
+    {# Sem můžeš později přidat další servisní karty #}
+    {#
+    <div class="col-12 col-lg-6">
+      <div class="card shadow-sm h-100">
+        <div class="card-header bg-secondary text-white">
+          <strong>Další nástroj</strong>
+        </div>
+        <div class="card-body">
+          ...
+        </div>
+      </div>
+    </div>
+    #}
+
+  </div>
+
+</div>
+{% endblock %}
