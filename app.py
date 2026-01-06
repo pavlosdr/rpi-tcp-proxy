@@ -265,38 +265,53 @@ def show_env():
     ]
 
     if request.method == "POST":
-        # načti původní .env
         try:
             with open(ENV_PATH, "r") as f:
                 lines = f.readlines()
         except FileNotFoundError:
             lines = []
 
-        # přepiš jen povolené klíče (zbytek zachovej)
         new_lines = []
         present = set()
+
+        def _clean(v: str) -> str:
+            return (v or "").strip()
+
         for line in lines:
             if "=" not in line or line.lstrip().startswith("#"):
                 new_lines.append(line)
                 continue
-            key = line.split("=", 1)[0].strip()
+
+            key, old_val = line.split("=", 1)
+            key = key.strip()
+
             if key in allowed:
-                val = request.form.get(key, "")
-                new_lines.append(f"{key}={val}\n")
+                form_val = _clean(request.form.get(key, None))
+
+                # 1) pokud uživatel pole nechal prázdné -> NEPŘEPISUJ, nech původní řádek
+                # (tzn. žádné KEY=)
+                if form_val == "":
+                    new_lines.append(line)
+                else:
+                    new_lines.append(f"{key}={form_val}\n")
+
                 present.add(key)
             else:
                 new_lines.append(line)
 
-        # klíče, které v .env vůbec nebyly – přidej na konec
+        # 2) chybějící klíče přidávej jen tehdy, když mají neprázdnou hodnotu
         for key in allowed:
             if key not in present:
-                val = request.form.get(key, os.getenv(key, ""))
-                new_lines.append(f"{key}={val}\n")
+                form_val = _clean(request.form.get(key, None))
+                env_val = _clean(os.getenv(key, ""))
+
+                val = form_val if form_val != "" else env_val
+                if val != "":
+                    new_lines.append(f"{key}={val}\n")
 
         with open(ENV_PATH, "w") as f:
             f.writelines(new_lines)
 
-        # reload do procesu
         load_dotenv(dotenv_path=ENV_PATH, override=True)
         flash(".env uloženo", "success")
         return redirect(url_for("show_env"))
@@ -640,6 +655,8 @@ def mqtt_discovery():
         items=items,
         result=result,
         error=error,
+        mqtt_host=host,
+        mqtt_port=port,
         title="MQTT Discovery – servis",
     )
 

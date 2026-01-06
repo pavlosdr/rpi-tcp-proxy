@@ -8,8 +8,11 @@
   </div>
 
   <div class="alert alert-warning">
-    Mazání discovery configů probíhá publishnutím <strong>NULL payloadu</strong> s <code>retain=true</code> na daný <code>.../config</code> topic.
-    Home Assistant se obvykle srovná během chvíle, případně pomůže reload MQTT integrace / restart HA.
+    Mazání discovery configů probíhá publishnutím prázdného payloadu s <code>retain=true</code> na daný <code>.../config</code> topic.
+    V Home Assistantu se entity obvykle odstraní po chvíli, případně pomůže reload MQTT integrace / restart HA.
+    Pokud je potřeba změnit typ spínače SWITCH na BUTTON nebo naopak, je nutné smazat discovery config, aby se mohl založit nový s novými údaji.
+    Smazat se také tímto způsobem musí spínač, který se již nemá automatizovaně přenášet do HA MQTT.
+    Pokud se záznam v discovery config nesmaže, stále se bude zakládat v MQTT na HA
   </div>
 
   {% if error %}
@@ -18,78 +21,63 @@
     </div>
   {% endif %}
 
-  <!-- LOAD/LIST -->
-  <form method="post" class="mb-4">
+  {% if result and result.errors %}
+    <div class="alert alert-danger">
+      <strong>Chyby:</strong>
+      <ul class="mb-0">
+        {% for e in result.errors %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <!-- SCAN -->
+  <form method="post" class="mb-4" id="scanForm">
     <input type="hidden" name="action" value="list">
-
-    <div class="row g-2 align-items-end">
-      <div class="col-12 col-lg-auto">
-        <button class="btn btn-outline-primary" type="submit">
-          Načíst retained discovery configy
-        </button>
-      </div>
-
-      <div class="col-12 col-lg-auto">
-        <span class="text-muted small">MQTT: <code>{{ mqtt_host }}:{{ mqtt_port }}</code></span>
-      </div>
-
-      <div class="col-12 col-lg-3">
-        <label class="form-label mb-0 small text-muted">Contains (volitelné)</label>
-        <input type="text" class="form-control form-control-sm font-monospace"
-               name="contains"
-               value="{{ request.form.get('contains','modbus_io') if request and request.method=='POST' else 'modbus_io' }}"
-               placeholder="modbus_io">
-      </div>
-
-      <div class="col-6 col-lg-2">
-        <label class="form-label mb-0 small text-muted">Limit</label>
-        <input type="number" class="form-control form-control-sm"
-               name="limit"
-               value="{{ request.form.get('limit','500') if request and request.method=='POST' else '500' }}"
-               min="1" max="5000">
-      </div>
-
-      <div class="col-6 col-lg-2">
-        <label class="form-label mb-0 small text-muted">Window (s)</label>
-        <input type="number" class="form-control form-control-sm"
-               name="window_s"
-               value="{{ request.form.get('window_s','1.5') if request and request.method=='POST' else '1.5' }}"
-               min="0.2" max="10" step="0.1">
-      </div>
-    </div>
-
-    <div class="form-text">
-      Pokud nic nenajdeš, zkus zvýšit <code>Window</code> (např. 3–5 s) nebo dočasně vyprázdnit <code>Contains</code>.
-      (Backend musí tyto hodnoty číst z <code>request.form</code>; pokud ne, funguje to i bez toho.)
-    </div>
+    <button class="btn btn-outline-primary" type="submit" id="btnScan">
+      <span class="btn-label">
+        <i class="bi bi-arrow-repeat me-1"></i>Načíst retained discovery configy
+      </span>
+      <span class="btn-loading d-none">
+        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+        Probíhá…
+      </span>
+    </button>
+    <span class="text-muted small ms-2">MQTT: <code>{{ mqtt_host }}:{{ mqtt_port }}</code></span>
   </form>
 
   <!-- DELETE -->
   <div class="card shadow-sm mb-4">
     <div class="card-header">
-      <strong>Mazání dle seznamu topiců</strong>
+      <strong>Mazání dle příkazu</strong>
     </div>
     <div class="card-body">
-
       <div class="mb-2 text-muted small">
-        Vlož 1 topic na řádek (přímé topic stringy). Pro glob/DEVICE by backend musel dělat expanzi.
-        Mazání funguje tak, že se na topic publikuje <code>payload=None</code> s <code>retain=true</code>.
+        1 řádek = 1 pravidlo. Podporováno:
+        <ul class="mb-0">
+          <li>přímý topic: <code>homeassistant/binary_sensor/modbus_io_128_2/config</code></li>
+          <li>glob: <code>homeassistant/binary_sensor/modbus_io_128_*/config</code></li>
+          <li>DEVICE: <code>DEVICE modbus_io_rpi</code></li>
+        </ul>
       </div>
 
-      <form method="post">
+      <form method="post" id="deleteForm">
         <input type="hidden" name="action" value="delete">
-        <textarea class="form-control font-monospace"
-                  name="delete_topics"
-                  rows="7"
-                  placeholder="homeassistant/binary_sensor/modbus_io_128_2/config"></textarea>
+        <textarea class="form-control font-monospace" name="delete_topics" rows="5"
+            placeholder="homeassistant/binary_sensor/modbus_io_128_*/config"></textarea>
 
-        <div class="mt-3 d-flex flex-wrap gap-2 align-items-center">
-          <button class="btn btn-outline-danger" type="submit"
-                  onclick="return confirm('Opravdu smazat zadané retained discovery configy?');">
-            Smazat
+        <div class="mt-3 d-flex gap-2">
+          <button class="btn btn-outline-danger" type="submit" id="btnDelete">
+            <span class="btn-label">
+              <i class="bi bi-trash3 me-1"></i>Smazat
+            </span>
+            <span class="btn-loading d-none">
+              <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+              Mažu…
+            </span>
           </button>
-          <div class="text-muted small">
-            Tip: nejdřív klikni na Načíst a zkopíruj topic(y) z tabulky.
+
+          <div class="text-muted small align-self-center">
+            Tip: nejdřív klikni na Načíst, ať je co porovnávat a mazat.
           </div>
         </div>
       </form>
@@ -97,40 +85,23 @@
       {% if result %}
         <hr>
         <div class="mb-2"><strong>Výsledek mazání</strong></div>
-
-        <div class="d-flex flex-wrap gap-3">
-          <div>
-            <span class="text-muted small">Smazáno:</span>
-            <span class="badge bg-success">{{ result.deleted }}</span>
-          </div>
-
-          <div>
-            <span class="text-muted small">Chyby:</span>
-            {% if result.errors and result.errors|length > 0 %}
-              <span class="badge bg-danger">{{ result.errors|length }}</span>
-            {% else %}
-              <span class="badge bg-secondary">0</span>
-            {% endif %}
-          </div>
+        <div class="text-muted small mb-2">
+          Smazáno: <strong>{{ result.deleted }}</strong>
         </div>
-
         {% if result.errors and result.errors|length > 0 %}
-          <div class="mt-3">
-            <div class="text-muted small mb-1">Detaily chyb:</div>
-            <ul class="mb-0">
-              {% for e in result.errors %}
-                <li><code>{{ e }}</code></li>
-              {% endfor %}
-            </ul>
-          </div>
+          <ul class="mb-0">
+            {% for e in result.errors %}
+              <li><span class="text-danger">{{ e }}</span></li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-success small">Bez chyb.</div>
         {% endif %}
       {% endif %}
-
     </div>
   </div>
 
-  <!-- LIST OUTPUT -->
-  {% if items and items|length > 0 %}
+  {% if items %}
     <div class="card shadow-sm">
       <div class="card-header d-flex justify-content-between align-items-center">
         <strong>Retained discovery configy</strong>
@@ -142,8 +113,6 @@
             <thead>
               <tr>
                 <th style="min-width:420px;">Topic</th>
-                <th style="min-width:110px;">Retain</th>
-                <th style="min-width:80px;">QoS</th>
                 <th>Payload</th>
               </tr>
             </thead>
@@ -151,16 +120,8 @@
               {% for it in items %}
                 <tr>
                   <td><code>{{ it.topic }}</code></td>
-                  <td>
-                    {% if it.retain %}
-                      <span class="badge bg-success">true</span>
-                    {% else %}
-                      <span class="badge bg-secondary">false</span>
-                    {% endif %}
-                  </td>
-                  <td><span class="badge bg-light text-dark">{{ it.qos }}</span></td>
                   <td class="small">
-                    <pre class="mb-0" style="white-space: pre; overflow:auto; max-height: 220px;">{{ it.payload }}</pre>
+                    <pre class="mb-0" style="white-space: pre; overflow:auto; max-height: 180px;">{{ it.payload }}</pre>
                   </td>
                 </tr>
               {% endfor %}
@@ -169,13 +130,59 @@
         </div>
       </div>
     </div>
-  {% else %}
-    {% if request and request.method == "POST" and (request.form.get("action") in ["list","scan"]) %}
-      <div class="alert alert-secondary">
-        Nenalezeny žádné retained discovery configy pro zadané podmínky.
-      </div>
-    {% endif %}
   {% endif %}
 
 </div>
+
+<script>
+  (function () {
+    const btnScan = document.getElementById('btnScan');
+    const btnDelete = document.getElementById('btnDelete');
+    const scanForm = document.getElementById('scanForm');
+    const deleteForm = document.getElementById('deleteForm');
+
+    function setLoading(btn, loading) {
+      if (!btn) return;
+      const label = btn.querySelector('.btn-label');
+      const loadingEl = btn.querySelector('.btn-loading');
+      if (loading) {
+        if (label) label.classList.add('d-none');
+        if (loadingEl) loadingEl.classList.remove('d-none');
+        btn.classList.add('disabled');
+        btn.setAttribute('aria-disabled', 'true');
+        btn.style.pointerEvents = 'none';
+      } else {
+        if (label) label.classList.remove('d-none');
+        if (loadingEl) loadingEl.classList.add('d-none');
+        btn.classList.remove('disabled');
+        btn.removeAttribute('aria-disabled');
+        btn.style.pointerEvents = '';
+      }
+    }
+
+    if (scanForm && btnScan) {
+      scanForm.addEventListener('submit', function () {
+        if (btnScan.dataset.locked === "1") return;
+        btnScan.dataset.locked = "1";
+        setLoading(btnScan, true);
+        if (btnDelete) btnDelete.disabled = true;
+      });
+    }
+
+    if (deleteForm && btnDelete) {
+      deleteForm.addEventListener('submit', function (e) {
+        // confirm až tady, ať se spinner nezapne zbytečně
+        const ok = confirm('Opravdu smazat odpovídající discovery retained configy?');
+        if (!ok) {
+          e.preventDefault();
+          return;
+        }
+        if (btnDelete.dataset.locked === "1") return;
+        btnDelete.dataset.locked = "1";
+        setLoading(btnDelete, true);
+        if (btnScan) btnScan.disabled = true;
+      });
+    }
+  })();
+</script>
 {% endblock %}
