@@ -1,0 +1,153 @@
+{% macro service_status_card(service, service_status, show_meta=True) %}
+
+{# normalize state #}
+{% set service_state = (service_status or '')|lower %}
+{% set is_transition = service_state in ['activating', 'deactivating', 'reloading'] %}
+{% set can_control = not is_transition %}
+
+{# badge mapping #}
+{% if service_state == 'active' %}
+  {% set badge_class = 'bg-success' %}
+  {% set badge_text = 'RUNNING' %}
+{% elif service_state == 'inactive' %}
+  {% set badge_class = 'bg-secondary' %}
+  {% set badge_text = 'STOPPED' %}
+{% elif service_state == 'failed' %}
+  {% set badge_class = 'bg-danger' %}
+  {% set badge_text = 'FAILED' %}
+{% elif is_transition %}
+  {% set badge_class = 'bg-warning text-dark' %}
+  {% set badge_text = service_state|upper %}
+{% else %}
+  {% set badge_class = 'bg-dark' %}
+  {% set badge_text = 'UNKNOWN' %}
+{% endif %}
+
+<div class="card shadow-sm mb-3" data-service-id="{{ service.id }}">
+
+  <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+    {% if show_meta %}
+      <div class="d-flex align-items-center gap-2">
+        {% if service.icon %}
+          <i class="{{ service.icon }}"></i>
+        {% endif %}
+        <div>
+          <strong>{{ service.pretty_name }}</strong>
+          {% if service.description %}
+            <div class="small opacity-75">{{ service.description }}</div>
+          {% endif %}
+        </div>
+      </div>
+    {% else %}
+      <strong>Stav služby</strong>
+    {% endif %}
+
+    <span class="badge {{ badge_class }}"
+          id="service-badge-{{ service.id }}"
+          data-service-id="{{ service.id }}">
+      {{ badge_text }}
+    </span>
+  </div>
+
+  <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+
+    {# Start (visible when NOT active) #}
+    <button type="submit"
+            class="btn btn-outline-success {% if service_state == 'active' %}d-none{% endif %}"
+            form="start-form-{{ service.id }}"
+            data-action="start"
+            {% if not can_control %}disabled{% endif %}
+            data-loading
+            title="{% if not can_control %}Služba mění stav ({{ service_state }}){% else %}Spustit službu{% endif %}">
+      <span class="spinner-border spinner-border-sm d-none"></span>
+      <span class="btn-text">Start</span>
+    </button>
+
+    {# Stop -> modal (visible when active) #}
+    <button type="button"
+            class="btn btn-outline-danger {% if service_state != 'active' %}d-none{% endif %}"
+            data-action="stop"
+            {% if not can_control %}disabled{% endif %}
+            data-bs-toggle="modal"
+            data-bs-target="#stopModal-{{ service.id }}"
+            title="{% if not can_control %}Služba mění stav ({{ service_state }}){% else %}Zastavit službu{% endif %}">
+      Stop
+    </button>
+
+    {# Restart #}
+    <button type="submit"
+            class="btn btn-outline-primary"
+            form="restart-form-{{ service.id }}"
+            data-action="restart"
+            {% if not can_control %}disabled{% endif %}
+            data-loading
+            title="{% if not can_control %}Služba mění stav ({{ service_state }}){% else %}Restartovat službu{% endif %}">
+      <span class="spinner-border spinner-border-sm d-none"></span>
+      <span class="btn-text">Restartovat</span>
+    </button>
+
+    {# Detail #}
+    <a href="{{ url_for('service_detail', service_id=service.id) }}"
+       class="btn btn-outline-info ms-auto"
+       data-action="detail">
+      Detail služby
+    </a>
+
+  </div>
+</div>
+
+{# hidden forms #}
+<form id="start-form-{{ service.id }}"
+      method="post"
+      action="{{ url_for('start_service', service_id=service.id) }}"
+      class="d-none"></form>
+
+<form id="restart-form-{{ service.id }}"
+      method="post"
+      action="{{ url_for('restart', service_id=service.id) }}"
+      class="d-none"></form>
+
+<form id="stop-form-{{ service.id }}"
+      method="post"
+      action="{{ url_for('stop_service', service_id=service.id) }}"
+      class="d-none"></form>
+
+{# stop modal #}
+{% if can_control %}
+<div class="modal fade" id="stopModal-{{ service.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">Zastavit službu?</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+
+      <div class="modal-body">
+        <p>Opravdu chceš zastavit službu:</p>
+        <p class="fw-bold mb-2">{{ service.pretty_name }}</p>
+        <div class="alert alert-warning mb-0">
+          Tato akce může ovlivnit běh systému nebo Home Assistant.
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+          Zrušit
+        </button>
+
+        <button type="submit"
+                class="btn btn-danger"
+                form="stop-form-{{ service.id }}"
+                data-loading>
+          <span class="spinner-border spinner-border-sm d-none"></span>
+          <span class="btn-text">Ano, zastavit</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endmacro %}

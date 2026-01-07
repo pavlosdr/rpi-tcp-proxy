@@ -2,39 +2,65 @@
 {% block content %}
 <div class="container py-4">
 
-  {% set s = (state or '')|lower %}
+  {# očekáváme: service (dict), service_status (string), unit (string),
+               status_out, journal_out, journal_lines #}
 
-  <div class="d-flex align-items-center justify-content-between mb-3">
+  {% set s = (service_status or '')|lower %}
+  {% set is_active = (s == 'active') %}
+  {% set is_failed = ('failed' in s) %}
+  {% set is_inactive = ('inactive' in s or 'dead' in s) %}
+  {% set is_transition = (s in ['activating', 'deactivating', 'reloading']) %}
+
+  {# badge mapping #}
+  {% if is_active %}
+    {% set badge_class = 'bg-success' %}
+    {% set badge_text = 'RUNNING' %}
+    {% set badge_icon = 'bi-check-circle' %}
+  {% elif is_failed %}
+    {% set badge_class = 'bg-danger' %}
+    {% set badge_text = 'FAILED' %}
+    {% set badge_icon = 'bi-x-octagon' %}
+  {% elif is_transition %}
+    {% set badge_class = 'bg-warning text-dark' %}
+    {% set badge_text = s|upper %}
+    {% set badge_icon = 'bi-hourglass-split' %}
+  {% elif is_inactive %}
+    {% set badge_class = 'bg-secondary' %}
+    {% set badge_text = 'STOPPED' %}
+    {% set badge_icon = 'bi-pause-circle' %}
+  {% else %}
+    {% set badge_class = 'bg-dark' %}
+    {% set badge_text = 'UNKNOWN' %}
+    {% set badge_icon = 'bi-question-circle' %}
+  {% endif %}
+
+  <!-- Header -->
+  <div class="d-flex align-items-start justify-content-between mb-3">
     <div>
       <h2 class="mb-1">Detail služby</h2>
-      <div class="text-muted">
-        <code>{{ pretty_name }}</code>
-        {% if unit %}<span class="ms-2">(<code>{{ unit }}</code>)</span>{% endif %}
 
-        {% if state %}
-          {% if 'active' in s or 'running' in s %}
-            <span class="badge bg-success ms-2">
-              <i class="bi bi-check-circle me-1"></i>{{ state }}
-            </span>
-          {% elif 'failed' in s %}
-            <span class="badge bg-danger ms-2">
-              <i class="bi bi-x-octagon me-1"></i>{{ state }}
-            </span>
-          {% elif 'inactive' in s or 'dead' in s %}
-            <span class="badge bg-secondary ms-2">
-              <i class="bi bi-pause-circle me-1"></i>{{ state }}
-            </span>
-          {% elif 'activating' in s %}
-            <span class="badge bg-warning text-dark ms-2">
-              <i class="bi bi-hourglass-split me-1"></i>{{ state }}
-            </span>
-          {% else %}
-            <span class="badge bg-secondary ms-2">
-              <i class="bi bi-question-circle me-1"></i>{{ state }}
-            </span>
-          {% endif %}
+      <div class="text-muted">
+        <code>{{ service.pretty_name }}</code>
+        {% if unit %}
+          <span class="ms-2">(<code>{{ unit }}</code>)</span>
+        {% endif %}
+
+        <span class="badge {{ badge_class }} ms-2"
+              id="service-badge-{{ service.id }}"
+              data-service-id="{{ service.id }}">
+          <i class="bi {{ badge_icon }} me-1"></i>{{ badge_text }}
+        </span>
+
+        {% if service_status %}
+          <span class="ms-2 small text-muted">({{ service_status }})</span>
         {% endif %}
       </div>
+
+      {% if service.description %}
+        <div class="text-muted small mt-1">
+          {{ service.description }}
+        </div>
+      {% endif %}
     </div>
 
     <div class="d-flex gap-2">
@@ -42,42 +68,48 @@
         <i class="bi bi-arrow-left me-1"></i>Zpět
       </a>
 
-      {% if state and ('active' in s or 'running' in s) %}
-        <form method="post"
-              action="{{ url_for('stop_service', service=pretty_name) }}"
-              class="d-inline"
-              onsubmit="return confirm('Zastavit službu {{ pretty_name }}?');">
-          <button type="submit" class="btn btn-sm btn-outline-warning">
-            <i class="bi bi-stop-circle me-1"></i>Stop
-          </button>
-        </form>
+      {# Start / Stop / Restart #}
+      {% if is_active %}
+        <button type="button"
+                class="btn btn-sm btn-outline-warning"
+                data-bs-toggle="modal"
+                data-bs-target="#stopModal-{{ service.id }}"
+                {% if is_transition %}disabled{% endif %}>
+          <i class="bi bi-stop-circle me-1"></i>Stop
+        </button>
       {% else %}
         <form method="post"
-              action="{{ url_for('start_service', service=pretty_name) }}"
-              class="d-inline"
-              onsubmit="return confirm('Spustit službu {{ pretty_name }}?');">
-          <button type="submit" class="btn btn-sm btn-outline-success">
-            <i class="bi bi-play-circle me-1"></i>Start
+              action="{{ url_for('start_service', service_id=service.id) }}"
+              class="d-inline">
+          <button type="submit"
+                  class="btn btn-sm btn-outline-success"
+                  {% if is_transition %}disabled{% endif %}
+                  data-loading>
+            <span class="spinner-border spinner-border-sm d-none"></span>
+            <span class="btn-text"><i class="bi bi-play-circle me-1"></i>Start</span>
           </button>
         </form>
       {% endif %}
 
       <form method="post"
-            action="{{ url_for('restart', service=pretty_name) }}"
-            class="d-inline"
-            onsubmit="return confirm('Restartovat službu {{ pretty_name }}?');">
-        <button type="submit" class="btn btn-sm btn-outline-primary">
-          <i class="bi bi-arrow-repeat me-1"></i>Restart
+            action="{{ url_for('restart', service_id=service.id) }}"
+            class="d-inline">
+        <button type="submit"
+                class="btn btn-sm btn-outline-primary"
+                {% if is_transition %}disabled{% endif %}
+                data-loading>
+          <span class="spinner-border spinner-border-sm d-none"></span>
+          <span class="btn-text"><i class="bi bi-arrow-repeat me-1"></i>Restart</span>
         </button>
       </form>
     </div>
   </div>
 
-  <!-- systemctl status (nahoře) -->
+  <!-- systemctl status -->
   <div class="card shadow-sm mb-3">
     <div class="card-header d-flex align-items-center justify-content-between">
       <strong>systemctl status</strong>
-      <span class="text-muted small">--no-pager --full</span>
+      <span class="text-muted small">--no-pager</span>
     </div>
     <div class="card-body">
       <pre class="mb-0"
@@ -85,7 +117,7 @@
     </div>
   </div>
 
-  <!-- journalctl (dole) -->
+  <!-- journalctl -->
   <div class="card shadow-sm">
     <div class="card-header d-flex align-items-center justify-content-between">
       <strong>journalctl</strong>
@@ -94,7 +126,7 @@
         <span class="text-muted small">posledních {{ journal_lines }} řádků</span>
 
         <a class="btn btn-sm btn-outline-secondary"
-           href="{{ url_for('service_detail', pretty_name=pretty_name, n=journal_lines) }}"
+           href="{{ url_for('service_detail', service_id=service.id, n=journal_lines) }}"
            data-bs-toggle="tooltip"
            title="Obnovit">
           <i class="bi bi-arrow-clockwise"></i>
@@ -110,7 +142,7 @@
             {% for n in [50,100,200,500,1000] %}
               <li>
                 <a class="dropdown-item"
-                   href="{{ url_for('service_detail', pretty_name=pretty_name, n=n) }}">
+                   href="{{ url_for('service_detail', service_id=service.id, n=n) }}">
                   {{ n }}
                 </a>
               </li>
@@ -125,6 +157,49 @@
            style="white-space: pre; overflow-x: auto; overflow-y: auto; max-height: 55vh;">{{ journal_out }}</pre>
     </div>
   </div>
+
+  {# ---------- Stop confirmation modal ---------- #}
+  {% if is_active and (not is_transition) %}
+  <form id="stop-form-{{ service.id }}"
+        method="post"
+        action="{{ url_for('stop_service', service_id=service.id) }}"
+        class="d-none"></form>
+
+  <div class="modal fade" id="stopModal-{{ service.id }}" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+
+        <div class="modal-header bg-danger text-white">
+          <h5 class="modal-title">Zastavit službu?</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+
+        <div class="modal-body">
+          <p>Opravdu chceš zastavit službu:</p>
+          <p class="fw-bold mb-2">{{ service.pretty_name }}</p>
+          <div class="alert alert-warning mb-0">
+            Tato akce může ovlivnit běh systému nebo Home Assistant.
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            Zrušit
+          </button>
+
+          <button type="submit"
+                  class="btn btn-danger"
+                  form="stop-form-{{ service.id }}"
+                  data-loading>
+            <span class="spinner-border spinner-border-sm d-none"></span>
+            <span class="btn-text">Ano, zastavit</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
 </div>
 {% endblock %}

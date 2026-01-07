@@ -1,26 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
 
-{% macro info_text(state) -%}
-  {% set s = (state or '')|lower %}
-  {% if s == 'active' %}
-    <span class="text-muted small">Služba běží.</span>
-  {% elif 'inactive' in s or 'dead' in s %}
-    <span class="text-muted small">Služba neběží (inactive).</span>
-  {% elif 'failed' in s %}
-    <span class="text-danger small">Služba je ve stavu <b>failed</b>. Zkontroluj journalctl.</span>
-  {% elif 'activating' in s %}
-    <span class="text-muted small">Služba se spouští (activating)…</span>
-  {% elif 'deactivating' in s %}
-    <span class="text-muted small">Služba se zastavuje (deactivating)…</span>
-  {% elif 'unknown' in s %}
-    <span class="text-muted small">Stav nelze zjistit (unknown).</span>
-  {% else %}
-    <span class="text-muted small">Stav: {{ state }}</span>
-  {% endif %}
-{%- endmacro %}
+{% from "macros/service_status.html" import service_status_card %}
 
 <div class="container py-4">
+
+  <!-- Header -->
   <div class="d-flex align-items-center justify-content-between mb-3">
     <h2 class="mb-0">Služby</h2>
 
@@ -32,172 +17,55 @@
     </a>
   </div>
 
+  <!-- Info -->
   <div class="alert alert-info d-flex align-items-start gap-2">
     <div>
-      Zde vidíš systemd služby běžící na RPi. Akce Start/Stop/Restart volají <code>systemctl</code>
-      přes bezpečné endpointy (jen služby z whitelistu).
+      Zde vidíš systemd služby běžící na RPi.
+      Ovládací prvky (<b>Start / Stop / Restart / Detail</b>) jsou sjednocené
+      se stránkami jednotlivých agend.
     </div>
   </div>
 
-  {% set active_items = [] %}
-  {% set other_items = [] %}
-  {% for name, state in services.items() %}
-    {% set s = (state or '')|lower %}
-    {# POZOR: "inactive" obsahuje substring "active" -> musí být přesná shoda #}
-    {% if s == 'active' %}
-      {% set _ = active_items.append((name, state)) %}
-    {% else %}
-      {% set _ = other_items.append((name, state)) %}
-    {% endif %}
-  {% endfor %}
+  <!-- Services list -->
+  {% if services %}
+    {% for s in services %}
+      <div class="mb-4">
 
-  <div class="card shadow-sm">
-    <div class="card-body">
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0">
-          <thead>
-            <tr>
-              <th style="min-width: 220px;">Název</th>
-              <th style="min-width: 140px;">Stav</th>
-              <th>Info</th>
-              <th class="text-end" style="min-width: 220px;">Akce</th>
-            </tr>
-          </thead>
-          <tbody>
+        <!-- Název + popis agendy -->
+        <!--<div class="mb-2">
+          <h5 class="mb-0">
+            <i class="bi {{ s.meta.icon }} me-2"></i>
+            {{ s.meta.pretty_name }}
+          </h5>
+          {% if s.meta.description %}
+            <div class="text-muted small">
+              {{ s.meta.description }}
+            </div>
+          {% endif %}
+        </div>
+      -->
+        <!-- Stav služby (sjednocené makro) -->
+        {{ service_status_card(
+            service=s.meta,
+            service_status=s.state, 
+            show_meta=true
+        ) }}
 
-            {% for name, state in (active_items|sort) %}
-              {% set s = (state or '')|lower %}
-              <tr>
-                <td><code>{{ name }}</code></td>
-                <td>
-                  <span class="badge bg-success">
-                    <i class="bi bi-check-circle me-1"></i>{{ state }}
-                  </span>
-                </td>
-                <td>
-                  {{ info_text(state) }}
-                </td>
-                <td class="text-end">
-                  <form method="post"
-                        action="{{ url_for('stop_service', service=name) }}"
-                        class="d-inline"
-                        onsubmit="return confirm('Zastavit službu {{ name }}?');">
-                    <button type="submit" class="btn btn-sm btn-outline-warning">
-                      <i class="bi bi-stop-circle me-1"></i>Stop
-                    </button>
-                  </form>
-
-                  <a class="btn btn-sm btn-outline-secondary ms-2"
-                     href="{{ url_for('service_detail', pretty_name=name) }}">
-                    <i class="bi bi-info-circle me-1"></i>Detail
-                  </a>
-
-                  <form method="post"
-                        action="{{ url_for('restart', service=name) }}"
-                        class="d-inline ms-2"
-                        onsubmit="return confirm('Restartovat službu {{ name }}?');">
-                    <button type="submit" class="btn btn-sm btn-outline-primary">
-                      <i class="bi bi-arrow-repeat me-1"></i>Restart
-                    </button>
-                  </form>
-                </td>
-              </tr>
-            {% endfor %}
-
-            {% if active_items and other_items %}
-              <tr>
-                <td colspan="4" class="py-2">
-                  <div class="border-top"></div>
-                </td>
-              </tr>
-            {% endif %}
-
-            {% for name, state in (other_items|sort) %}
-              {% set s = (state or '')|lower %}
-              <tr>
-                <td><code>{{ name }}</code></td>
-                <td>
-                  {% if 'failed' in s %}
-                    <span class="badge bg-danger">
-                      <i class="bi bi-x-octagon me-1"></i>{{ state }}
-                    </span>
-                  {% elif 'inactive' in s or 'dead' in s %}
-                    <span class="badge bg-secondary">
-                      <i class="bi bi-pause-circle me-1"></i>{{ state }}
-                    </span>
-                  {% elif 'activating' in s %}
-                    <span class="badge bg-warning text-dark">
-                      <i class="bi bi-hourglass-split me-1"></i>{{ state }}
-                    </span>
-                  {% elif 'deactivating' in s %}
-                    <span class="badge bg-warning text-dark">
-                      <i class="bi bi-hourglass-split me-1"></i>{{ state }}
-                    </span>
-                  {% else %}
-                    <span class="badge bg-secondary">
-                      <i class="bi bi-question-circle me-1"></i>{{ state }}
-                    </span>
-                  {% endif %}
-                </td>
-
-                <td>
-                  {{ info_text(state) }}
-                </td>
-
-                <td class="text-end">
-                  {# Start/Stop rozhoduj přesně podle is-active #}
-                  {% if s == 'active' %}
-                    <form method="post"
-                          action="{{ url_for('stop_service', service=name) }}"
-                          class="d-inline"
-                          onsubmit="return confirm('Zastavit službu {{ name }}?');">
-                      <button type="submit" class="btn btn-sm btn-outline-warning">
-                        <i class="bi bi-stop-circle me-1"></i>Stop
-                      </button>
-                    </form>
-                  {% else %}
-                    <form method="post"
-                          action="{{ url_for('start_service', service=name) }}"
-                          class="d-inline"
-                          onsubmit="return confirm('Spustit službu {{ name }}?');">
-                      <button type="submit" class="btn btn-sm btn-outline-success">
-                        <i class="bi bi-play-circle me-1"></i>Start
-                      </button>
-                    </form>
-                  {% endif %}
-
-                  <a class="btn btn-sm btn-outline-secondary ms-2"
-                     href="{{ url_for('service_detail', pretty_name=name) }}">
-                    <i class="bi bi-info-circle me-1"></i>Detail
-                  </a>
-
-                  <form method="post"
-                        action="{{ url_for('restart', service=name) }}"
-                        class="d-inline ms-2"
-                        onsubmit="return confirm('Restartovat službu {{ name }}?');">
-                    <button type="submit" class="btn btn-sm btn-outline-primary">
-                      <i class="bi bi-arrow-repeat me-1"></i>Restart
-                    </button>
-                  </form>
-                </td>
-              </tr>
-            {% endfor %}
-
-            {% if not services %}
-              <tr>
-                <td colspan="4" class="text-muted">Žádné služby k zobrazení.</td>
-              </tr>
-            {% endif %}
-
-          </tbody>
-        </table>
       </div>
-
-      <div class="mt-3 text-muted small">
-        Tip: pokud něco nefunguje, nejrychlejší diagnostika je:
-        <code>systemctl status NAZEV.service</code> a <code>journalctl -u NAZEV.service -n 200</code>.
-      </div>
+    {% endfor %}
+  {% else %}
+    <div class="text-muted">
+      Žádné služby k zobrazení.
     </div>
+  {% endif %}
+
+  <!-- Footer tip -->
+  <div class="mt-3 text-muted small">
+    Tip: pokud něco nefunguje, nejrychlejší diagnostika je:
+    <code>systemctl status NAZEV.service</code> a
+    <code>journalctl -u NAZEV.service -n 200</code>.
   </div>
+
 </div>
+
 {% endblock %}

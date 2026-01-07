@@ -17,6 +17,7 @@
   <!-- Vlastní styl -->
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
+
 <body class="bg-light">
 
   <!-- Navigace -->
@@ -74,14 +75,22 @@
 
           <li class="nav-item">
             <a class="nav-link {% if request.endpoint in ['service_page', 'mqtt_discovery'] %}active{% endif %}"
-              href="{{ url_for('service_page') }}">
-             <i class="bi bi-tools me-1"></i>Servis
+               href="{{ url_for('service_page') }}">
+              <i class="bi bi-tools me-1"></i>Servis
+            </a>
           </li>
+
+          <li class="nav-item">
+            <a class="nav-link {% if request.endpoint=='io_modbus_mqtt' %}active{% endif %}"
+               href="{{ url_for('io_modbus_mqtt') }}">
+              <i class="bi bi-tools me-1"></i>IO MODBUS–MQTT
+            </a>
+          </li>
+
         </ul>
 
         <div class="d-flex">
-          <a class="btn btn-outline-light btn-sm"
-             href="{{ url_for('logout') }}">
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('logout') }}">
             <i class="bi bi-box-arrow-right me-1"></i>Odhlásit
           </a>
         </div>
@@ -109,14 +118,289 @@
     {% block content %}{% endblock %}
   </main>
 
-  <!-- Bootstrap bundle -->
+  <!-- Bootstrap bundle (musí být před naším JS) -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
-  <!-- Tooltippy -->
+  <!-- Globální JS (1×, stabilní) -->
   <script>
-    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-      new bootstrap.Tooltip(el);
-    });
+  (function () {
+
+    // -----------------------------
+    // Helpers
+    // -----------------------------
+    function startLoading(btn) {
+      if (!btn) return;
+      if (btn.dataset.loading === "1") return;
+
+      btn.dataset.loading = "1";
+      if (!btn.dataset._origDisabled) btn.dataset._origDisabled = btn.disabled ? "1" : "0";
+      btn.disabled = true;
+
+      const spinner = btn.querySelector(".spinner-border");
+      if (spinner) spinner.classList.remove("d-none");
+
+      const text = btn.querySelector(".btn-text");
+      if (text) text.classList.add("opacity-75");
+    }
+
+    function stopLoading(btn) {
+      if (!btn) return;
+
+      const orig = btn.dataset._origDisabled === "1";
+      btn.disabled = orig;
+
+      delete btn.dataset.loading;
+      delete btn.dataset._origDisabled;
+
+      const spinner = btn.querySelector(".spinner-border");
+      if (spinner) spinner.classList.add("d-none");
+
+      const text = btn.querySelector(".btn-text");
+      if (text) text.classList.remove("opacity-75");
+    }
+
+    function resetAllLoading() {
+      document.querySelectorAll("[data-loading]").forEach(stopLoading);
+    }
+
+    function hideModalIfInside(el) {
+      if (!el) return;
+      const modalEl = el.closest(".modal");
+      if (!modalEl) return;
+
+      try {
+        const inst = bootstrap.Modal.getOrCreateInstance(modalEl);
+        inst.hide();
+      } catch (e) {}
+    }
+
+    function show(el) {
+      if (!el) return;
+      el.classList.remove("d-none");
+      el.removeAttribute("hidden");
+    }
+
+    function hide(el) {
+      if (!el) return;
+      el.classList.add("d-none");
+      el.setAttribute("hidden", "hidden");
+    }
+
+    // -----------------------------
+    // Tooltips
+    // -----------------------------
+    function initTooltips(root) {
+      if (!window.bootstrap || !bootstrap.Tooltip) return;
+      (root || document).querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (el) {
+        const inst = bootstrap.Tooltip.getInstance(el);
+        if (inst) inst.dispose();
+        new bootstrap.Tooltip(el);
+      });
+    }
+
+    // -----------------------------
+    // Env form validation (jen když existuje)
+    // -----------------------------
+    function initEnvFormValidation() {
+      const form = document.getElementById("envForm");
+      if (!form) return;
+
+      form.addEventListener("submit", function (event) {
+        const submitter = event.submitter;
+        if (submitter && submitter.hasAttribute("formnovalidate")) return;
+
+        if (!form.checkValidity()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        form.classList.add("was-validated");
+      }, false);
+    }
+
+    // -----------------------------
+    // Loading: submit + "běžná" tlačítka
+    // -----------------------------
+    function initLoadingHandlers() {
+
+      // 1) Submit: spinner až když se opravdu submituje
+      document.addEventListener("submit", function (ev) {
+        const submitter = ev.submitter;
+        if (submitter && submitter.matches("[data-loading]")) {
+          startLoading(submitter);
+          hideModalIfInside(submitter);
+        }
+      }, true);
+
+      // 2) Click: data-loading tlačítka mimo submit (např. diagnostika/AJAX)
+      document.addEventListener("click", function (ev) {
+        const btn = ev.target.closest("[data-loading]");
+        if (!btn) return;
+
+        const isSubmit = (btn.getAttribute("type") || "").toLowerCase() === "submit";
+        // submit s navázaným form (i přes form="id") řeší submit event
+        if (isSubmit && btn.form) return;
+        if (isSubmit && btn.closest("form")) return;
+
+        startLoading(btn);
+
+        window.setTimeout(function () {
+          stopLoading(btn);
+        }, 15000);
+      }, true);
+
+      // Reset při návratu/redirectu (BFCache, back)
+      window.addEventListener("pageshow", function () {
+        document.querySelectorAll(".modal-backdrop").forEach(function (b) { b.remove(); });
+        document.body.classList.remove("modal-open");
+        document.body.style.removeProperty("padding-right");
+
+        resetAllLoading();
+        initTooltips(document);
+
+        // znovu nastartuj polling (BFCache může nechat staré intervaly)
+        initServiceStatusPolling();
+      });
+    }
+
+    // -----------------------------
+    // Polling systemd badge (pro VŠECHNY služby na stránce)
+    // -----------------------------
+    let pollTimer = null;
+
+    function setTransitionLock(cardEl, inTransition) {
+      // zamykáme jen v přechodu, mimo přechod vracíme původní stavy
+      cardEl.querySelectorAll("button, a.btn").forEach(function (el) {
+
+        if (inTransition) {
+          if (!el.dataset._preTransition) {
+            const prev = {
+              disabled: (el.tagName === "A") ? el.classList.contains("disabled") : !!el.disabled,
+              ariaDisabled: el.getAttribute("aria-disabled") || "",
+              tabindex: el.getAttribute("tabindex") || ""
+            };
+            el.dataset._preTransition = JSON.stringify(prev);
+          }
+
+          if (el.tagName === "A") {
+            el.classList.add("disabled");
+            el.setAttribute("aria-disabled", "true");
+            el.setAttribute("tabindex", "-1");
+          } else {
+            el.disabled = true;
+          }
+
+          return;
+        }
+
+        // unlock
+        if (!el.dataset._preTransition) return;
+        try {
+          const prev = JSON.parse(el.dataset._preTransition);
+
+          if (el.tagName === "A") {
+            if (!prev.disabled) el.classList.remove("disabled");
+            if (prev.ariaDisabled) el.setAttribute("aria-disabled", prev.ariaDisabled);
+            else el.removeAttribute("aria-disabled");
+            if (prev.tabindex) el.setAttribute("tabindex", prev.tabindex);
+            else el.removeAttribute("tabindex");
+          } else {
+            el.disabled = !!prev.disabled;
+          }
+
+        } catch (e) {
+          // fallback: jen odemkni (lepší než nechat zamčené)
+          if (el.tagName === "A") {
+            el.classList.remove("disabled");
+            el.removeAttribute("aria-disabled");
+            el.removeAttribute("tabindex");
+          } else {
+            el.disabled = false;
+          }
+        } finally {
+          delete el.dataset._preTransition;
+        }
+      });
+    }
+
+    function initServiceStatusPolling() {
+      const POLL_MS = 3000;
+
+      function applyState(cardEl, badgeEl, state) {
+        const s = (state || "unknown").toLowerCase();
+
+        // badge
+        badgeEl.textContent = s.toUpperCase();
+        badgeEl.className = "badge";
+        if (s === "active") badgeEl.classList.add("bg-success");
+        else if (s === "inactive") badgeEl.classList.add("bg-secondary");
+        else if (s === "failed") badgeEl.classList.add("bg-danger");
+        else if (["activating", "deactivating", "reloading"].includes(s)) badgeEl.classList.add("bg-warning", "text-dark");
+        else badgeEl.classList.add("bg-dark");
+
+        // transition lock/unlock
+        const inTransition = ["activating", "deactivating", "reloading"].includes(s);
+        setTransitionLock(cardEl, inTransition);
+
+        // Start/Stop toggle (bez reloadu) – jen když existují
+        const startEl = cardEl.querySelector('[data-action="start"]');
+        const stopEl  = cardEl.querySelector('[data-action="stop"]');
+
+        if (startEl && stopEl) {
+          if (s === "active") {
+            hide(startEl);
+            show(stopEl);
+          } else {
+            show(startEl);
+            hide(stopEl);
+          }
+        }
+      }
+
+      async function pollOnce() {
+        const cards = document.querySelectorAll("[data-service-id]");
+        if (!cards.length) return;
+
+        for (const card of cards) {
+          const serviceId = (card.dataset.serviceId || "").trim();
+          if (!serviceId) continue;
+
+          const badge = card.querySelector('[id^="service-badge-"]');
+          if (!badge) continue;
+
+          try {
+            const r = await fetch("/api/service-status/" + encodeURIComponent(serviceId), { cache: "no-store" });
+            if (!r.ok) continue;
+            const data = await r.json();
+            applyState(card, badge, data.state);
+          } catch (e) {
+            // ticho
+          }
+        }
+      }
+
+      if (pollTimer) window.clearInterval(pollTimer);
+      pollOnce();
+      pollTimer = window.setInterval(pollOnce, POLL_MS);
+    }
+
+    // -----------------------------
+    // Boot
+    // -----------------------------
+    function init() {
+      initTooltips(document);
+      initEnvFormValidation();
+      initLoadingHandlers();
+      initServiceStatusPolling();
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+
+  })();
   </script>
+
 </body>
 </html>

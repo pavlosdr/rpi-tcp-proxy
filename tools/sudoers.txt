@@ -1,0 +1,44 @@
+# RPi Admin UI - allowlisted systemctl/journalctl commands for user pi
+# Paths confirmed:
+# /usr/bin/systemctl
+# /usr/bin/journalctl
+
+# --- rpi-admin-ui.service ---
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl start rpi-admin-ui.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl stop rpi-admin-ui.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart rpi-admin-ui.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl is-active rpi-admin-ui.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl status rpi-admin-ui.service
+pi ALL=(root) NOPASSWD: /usr/bin/journalctl -u rpi-admin-ui.service *
+
+# --- rpi-mqtt-report.service ---
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl start rpi-mqtt-report.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl stop rpi-mqtt-report.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart rpi-mqtt-report.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl is-active rpi-mqtt-report.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl status rpi-mqtt-report.service
+pi ALL=(root) NOPASSWD: /usr/bin/journalctl -u rpi-mqtt-report.service *
+
+# --- infigy_ws_to_mqtt.service ---
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl start infigy_ws_to_mqtt.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl stop infigy_ws_to_mqtt.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart infigy_ws_to_mqtt.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl is-active infigy_ws_to_mqtt.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl status infigy_ws_to_mqtt.service
+pi ALL=(root) NOPASSWD: /usr/bin/journalctl -u infigy_ws_to_mqtt.service *
+
+# --- modbus_io_broker.service ---
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl start modbus_io_broker.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl stop modbus_io_broker.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart modbus_io_broker.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl is-active modbus_io_broker.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl status modbus_io_broker.service
+pi ALL=(root) NOPASSWD: /usr/bin/journalctl -u modbus_io_broker.service *
+
+# --- modbus_tcp_proxy.service (root service, but UI user is pi) ---
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl start modbus_tcp_proxy.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl stop modbus_tcp_proxy.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart modbus_tcp_proxy.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl is-active modbus_tcp_proxy.service
+pi ALL=(root) NOPASSWD: /usr/bin/systemctl status modbus_tcp_proxy.service
+pi ALL=(root) NOPASSWD: /usr/bin/journalctl -u modbus_tcp_proxy.service *

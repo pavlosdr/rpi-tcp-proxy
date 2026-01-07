@@ -1,5 +1,5 @@
 # app.py — finální s metrikami logu
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, abort
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, abort, jsonify
 from dotenv import load_dotenv
 import os
 import io
@@ -17,15 +17,20 @@ from auth import login_required, check_credentials
 from monitor import (
     get_system_info,
     get_services_status,
-    restart_service_safe,
     get_multi_ping_stats,
     get_all_vnstat_stats,
     get_iperf_test,
-    get_service_detail,
-    start_service_safe,
-    stop_service_safe,
     get_mqtt_latency_test,
     get_modbus_rtt_test,
+)
+from services_control import (
+    SERVICES_META,
+    get_meta,
+    is_active,
+    restart_service_safe,
+    start_service_safe,
+    stop_service_safe,
+    get_service_detail,
 )
 
 # načti .env ze stejného adresáře
@@ -176,58 +181,71 @@ def index():
         title="Dashboard",
     )
 
-@app.route("/restart/<service>", methods=["POST"])
+@app.route("/restart/<service_id>", methods=["POST"])
 @login_required
-def restart(service):
-    ok, msg = restart_service_safe(service)
+def restart(service_id):
+    ok, msg = restart_service_safe(service_id)
     flash(msg, "success" if ok else "error")
     return redirect(request.referrer or url_for("services_page"))
 
-@app.route("/start/<service>", methods=["POST"])
+
+@app.route("/start/<service_id>", methods=["POST"])
 @login_required
-def start_service(service):
-    ok, msg = start_service_safe(service)
+def start_service(service_id):
+    ok, msg = start_service_safe(service_id)
     flash(msg, "success" if ok else "error")
     return redirect(request.referrer or url_for("services_page"))
 
-@app.route("/stop/<service>", methods=["POST"])
+
+@app.route("/stop/<service_id>", methods=["POST"])
 @login_required
-def stop_service(service):
-    ok, msg = stop_service_safe(service)
+def stop_service(service_id):
+    ok, msg = stop_service_safe(service_id)
     flash(msg, "success" if ok else "error")
     return redirect(request.referrer or url_for("services_page"))
 
 @app.route("/services", methods=["GET"])
 @login_required
 def services_page():
-    services = get_services_status()
-    return render_template(
-        "services.html",
-        services=services,
-        title="Služby",
-    )
+    services = []
+    for sid, meta in SERVICES_META.items():
+        _, state, _ = is_active(sid)
+        services.append({"meta": meta, "state": state})
 
-@app.route("/services/<pretty_name>", methods=["GET"])
+    return render_template("services.html", services=services, title="Služby")
+
+@app.route("/services/<service_id>", methods=["GET"])
 @login_required
-def service_detail(pretty_name):
+def service_detail(service_id):
     journal_lines = int(request.args.get("n", 200))
-    status_out, journal_out, err = get_service_detail(pretty_name, journal_lines=journal_lines)
-    if err:
+
+    meta = get_meta(service_id) or {
+        "id": service_id,
+        "pretty_name": service_id,
+        "unit": "",
+        "description": "",
+        "icon": "",
+    }
+
+    ok, state, err = is_active(service_id)
+    if not ok and err:
         flash(err, "error")
         return redirect(url_for("services_page"))
 
-    unit = None
-    try:
-        from monitor import SERVICES
-        unit = SERVICES.get(pretty_name)
-    except Exception:
-        unit = None
+    status_out, journal_out, err2, unit = get_service_detail(service_id, journal_lines=journal_lines)
+    if err2:
+        flash(err2, "error")
+        return redirect(url_for("services_page"))
+
+    meta = dict(meta)
+    meta["unit"] = unit  # pro zobrazení v detailu
 
     return render_template(
         "service_detail.html",
-        title=f"Detail služby: {pretty_name}",
-        pretty_name=pretty_name,
-        unit=unit or "",
+        title=f"Detail služby: {meta.get('pretty_name', service_id)}",
+        service=meta,
+        unit=unit,
+        state=state,
         status_out=status_out,
         journal_out=journal_out,
         journal_lines=journal_lines,
@@ -725,6 +743,62 @@ def logs_download():
         mimetype="text/plain",
     )
 
+#--------------------- NEW ROUTE pro NEW UI ---------------------------
+
+@app.route("/api/service-status/<service_id>", methods=["GET"])
+@login_required
+def api_service_status(service_id):
+    ok, state, err = is_active(service_id)
+    if not ok and err:
+        return jsonify({"state": "unknown", "error": err}), 400
+    return jsonify({"state": state})
+
+@app.route("/io-modbus-mqtt", methods=["GET"])
+@login_required
+def io_modbus_mqtt():
+    keys = [
+        # Basic – Modbus
+        "MODBUS_IO_MODBUS_PORT",
+        "MODBUS_IO_MODBUS_BAUDRATE",
+        "MODBUS_IO_MODBUS_TIMEOUT",
+
+        # IO map
+        "MODBUS_IO_SLAVES",
+        "MODBUS_IO_CHANNELS_PER_SLAVE",
+        "MODBUS_IO_DEFAULT_TYPE",
+        "MODBUS_IO_BUTTONS",
+
+        # MQTT
+        "MODBUS_IO_MQTT_HOST",
+        "MODBUS_IO_MQTT_PORT",
+        "MODBUS_IO_MQTT_BASE_TOPIC",
+
+        # Advanced
+        "MODBUS_IO_POLL_INTERVAL_S",
+        "MODBUS_IO_DEBOUNCE_SWITCH_MS",
+        "MODBUS_IO_DEBOUNCE_BUTTON_MS",
+    ]
+    values = {k: os.getenv(k, "") for k in keys}
+    
+    SERVICE_ID = "modbus-io-broker"
+
+    service = SERVICES_META[SERVICE_ID]
+    states = get_services_status()
+    state = states.get(SERVICE_ID, "unknown")
+
+    return render_template(
+        "io_modbus_mqtt.html",
+        values=values,
+        title=service["pretty_name"],
+        service=service,
+        service_status=state,
+    )
+
+
+
+
+
+#--------------------- END  NEW ROUTE pro NEW UI ----------------------
 if __name__ == "__main__":
     # pro vývoj; v produkci běží přes systemd
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))

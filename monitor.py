@@ -1,14 +1,10 @@
 import subprocess
 import shutil
 import re
+from services_control import SERVICE_WHITELIST
 
-SERVICES = {
-    "modbus_tcp_proxy": "modbus_tcp_proxy.service",
-    "modbus_io_broker": "modbus_io_broker.service",
-    "infigy_ws_to_mqtt": "infigy_ws_to_mqtt.service",
-    "rpi-mqtt-report": "rpi-mqtt-report.service",
-    "rpi-admin-ui": "rpi-admin-ui.service",
-}
+SYSTEMCTL = "/bin/systemctl"
+SUDO = "/usr/bin/sudo"
 
 def run(cmd):
     try:
@@ -40,63 +36,22 @@ def get_system_info():
     }
 
 def get_services_status():
-    status = {}
-    for pretty, unit in SERVICES.items():
+    """
+    Vrací dict: service_id -> systemctl is-active (active/inactive/failed/unknown...)
+    """
+    out = {}
+    for service_id, unit in SERVICE_WHITELIST.items():
         try:
-            out = subprocess.check_output(
+            state = subprocess.check_output(
                 ["systemctl", "is-active", unit],
                 text=True,
-                stderr=subprocess.STDOUT
+                stderr=subprocess.STDOUT,
             ).strip()
         except subprocess.CalledProcessError as e:
-            out = (e.output or "").strip() or "unknown"
-        status[pretty] = out
-    return status
+            state = (e.output or "").strip() or "unknown"
+        out[service_id] = state
+    return out
 
-
-def restart_service_safe(pretty_name: str):
-    unit = SERVICES.get(pretty_name)
-    if not unit:
-        return False, f"Služba '{pretty_name}' není povolena"
-
-    try:
-        # Speciální případ: restart samotného UI musí být "odložený",
-        # aby Flask stihl poslat odpověď prohlížeči.
-        if unit == "rpi-admin-ui.service":
-            subprocess.check_call([
-                "sudo", "systemd-run",
-                "--unit", "rpi-admin-ui-restart-job",
-                "--on-active=2s",
-                "/bin/systemctl", "restart", unit
-            ])
-            return True, f"Služba '{pretty_name}' bude restartována (za 2 s)"
-        else:
-            subprocess.check_call(["sudo", "systemctl", "restart", unit])
-            return True, f"Služba '{pretty_name}' restartována"
-
-    except subprocess.CalledProcessError as e:
-        return False, f"Restart selhal: {e}"
-
-
-def start_service_safe(pretty_name: str):
-    unit = SERVICES.get(pretty_name)
-    if not unit:
-        return False, f"Služba '{pretty_name}' není povolena"
-    try:
-        subprocess.check_call(["sudo", "systemctl", "start", unit])
-        return True, f"Služba '{pretty_name}' spuštěna"
-    except subprocess.CalledProcessError as e:
-        return False, f"Start selhal: {e}"
-
-def stop_service_safe(pretty_name: str):
-    unit = SERVICES.get(pretty_name)
-    if not unit:
-        return False, f"Služba '{pretty_name}' není povolena"
-    try:
-        subprocess.check_call(["sudo", "systemctl", "stop", unit])
-        return True, f"Služba '{pretty_name}' zastavena"
-    except subprocess.CalledProcessError as e:
-        return False, f"Stop selhal: {e}"
 
 def get_ping_stats(target="8.8.8.8", count=4):
     try:
@@ -157,8 +112,6 @@ def get_vnstat_interface_stats(interface="eth0"):
     except Exception as e:
         return {"interface": interface, "error": str(e)}
 
-
-
 def get_all_vnstat_stats():
     interfaces = ["eth0", "wlan0"]
     return [get_vnstat_interface_stats(i) for i in interfaces]
@@ -191,37 +144,6 @@ def get_tailscale_status():
     except Exception as e:
         return f"Error: {e}"
     
-def get_service_detail(pretty_name: str, journal_lines: int = 200):
-    unit = SERVICES.get(pretty_name)
-    if not unit:
-        return None, None, f"Služba '{pretty_name}' není povolena"
-
-    # systemctl status
-    try:
-        status_out = subprocess.check_output(
-            ["systemctl", "status", unit, "--no-pager", "--full"],
-            text=True,
-            stderr=subprocess.STDOUT
-        )
-    except subprocess.CalledProcessError as e:
-        status_out = (e.output or "").strip()
-        if not status_out:
-            status_out = f"systemctl status selhal: {e}"
-
-    # journalctl (posledních N řádků)
-    try:
-        journal_out = subprocess.check_output(
-            ["journalctl", "-u", unit, "-n", str(journal_lines), "--no-pager", "--output=short-iso"],
-            text=True,
-            stderr=subprocess.STDOUT
-        )
-    except subprocess.CalledProcessError as e:
-        journal_out = (e.output or "").strip()
-        if not journal_out:
-            journal_out = f"journalctl selhal: {e}"
-
-    return status_out, journal_out, None
-
 def get_mqtt_latency_test(
     host: str,
     port: int = 1883,
@@ -621,3 +543,33 @@ def get_modbus_rtt_test(
             client.close()
         except Exception:
             pass
+
+def systemctl_is_active(unit: str) -> str:
+    try:
+        out = subprocess.check_output(
+            [SYSTEMCTL, "is-active", unit],
+            text=True,
+            stderr=subprocess.STDOUT
+        ).strip()
+        return out
+    except subprocess.CalledProcessError as e:
+        return (e.output or "").strip() or "unknown"
+
+def systemctl_control(action: str, unit: str):
+    """
+    action: start|stop|restart
+    returns: (ok: bool, msg: str)
+    """
+    cmd = [SUDO, "-n", SYSTEMCTL, action, unit]
+    try:
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT).strip()
+        return True, (out or f"{action} OK: {unit}")
+    except subprocess.CalledProcessError as e:
+        err = (e.output or "").strip()
+        if "Interactive authentication required" in err or "a password is required" in err:
+            return False, (
+                f"{action} selhalo: chybí oprávnění (sudoers NOPASSWD). "
+                f"Unit={unit}. Detail: {err}"
+            )
+        return False, f"{action} selhalo: {err or str(e)}"
+    
