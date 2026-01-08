@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% from "macros/fields.html" import render_field %}
+
+{% block content %}
+<div class="container py-3 agenda-env">
+
+  <style>
+    .agenda-env .env-grid {
+      --bs-gutter-x: 16px;
+      --bs-gutter-y: 12px;
+    }
+
+    .agenda-env .env-grid .form-control,
+    .agenda-env .env-grid .form-select,
+    .agenda-env .env-grid textarea,
+    .agenda-env .env-grid .input-group {
+      width: 100% !important;
+      max-width: none !important;
+    }
+
+    .agenda-env .env-grid .input-group > .form-control,
+    .agenda-env .env-grid .input-group > .form-select {
+      flex: 1 1 auto;
+      width: 1% !important;
+      min-width: 0;
+    }
+  </style>
+
+  <div class="d-flex align-items-start justify-content-between mb-3">
+    <div>
+      <h2 class="mb-1">{{ agenda.title }}</h2>
+      {% if agenda.description %}
+        <div class="text-muted">{{ agenda.description }}</div>
+      {% endif %}
+      <div class="text-muted small mt-1">
+        .env: <code>{{ agenda.env_path }}</code>
+        {% if agenda.service_id %}
+          <span class="ms-2">služba: <code>{{ agenda.service_id }}</code></span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('io_modbus_mqtt') }}">Staré UI</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('services_page') }}">Služby</a>
+    </div>
+  </div>
+
+  <form method="post" class="mb-3">
+
+    <ul class="nav nav-tabs" role="tablist">
+      {% for tab in tabs %}
+        <li class="nav-item" role="presentation">
+          <button class="nav-link {% if loop.first %}active{% endif %}"
+                  data-bs-toggle="tab"
+                  data-bs-target="#tab-{{ tab.id }}"
+                  type="button"
+                  role="tab">
+            {{ tab.label }}
+          </button>
+        </li>
+      {% endfor %}
+    </ul>
+
+    <div class="tab-content border border-top-0 p-3 bg-white">
+      {% set errors = errors or {} %}
+
+      {% for tab in tabs %}
+        <div class="tab-pane fade {% if loop.first %}show active{% endif %}"
+             id="tab-{{ tab.id }}"
+             role="tabpanel">
+
+          {% for sec in sections if sec.tab == tab.id %}
+            <div class="card shadow-sm mb-3">
+
+              <div class="card-header bg-primary text-white py-2 d-flex justify-content-between align-items-center">
+                <div>
+                  <strong>{{ sec.label }}</strong>
+                  {% if sec.description %}
+                    <div class="small opacity-75">{{ sec.description }}</div>
+                  {% endif %}
+                </div>
+
+                {% if sec.tooltip %}
+                  <i class="bi bi-question-circle-fill"
+                     role="button"
+                     tabindex="0"
+                     data-bs-toggle="tooltip"
+                     data-bs-placement="top"
+                     title="{{ sec.tooltip|e }}"></i>
+                {% endif %}
+              </div>
+
+              <div class="card-body">
+                <div class="row env-grid">
+
+                  {% set sec_fields = (fields
+                    | selectattr("tab", "equalto", tab.id)
+                    | selectattr("section", "equalto", sec.id)
+                    | list) %}
+
+                  {% for f in sec_fields %}
+                    {% set editable = (f.editable is not defined) or f.editable %}
+                    {% set t = (f.type or 'str')|lower %}
+                    {% set v = (values.get(f.key, '') or '') %}
+                    {% set vlen = v|length %}
+                    {% set plen = ((f.placeholder or '')|length) %}
+
+                    {# šířka - auto / span #}
+                    {% set span = (f.span if f.span is defined else 0) %}
+
+                    {% if span == 3 or t == 'textarea' %}
+                      {% set col_class = 'col-12' %}
+                    {% elif span == 2 %}
+                      {% set col_class = 'col-12 col-md-6 col-lg-8' %}
+                    {% elif span == 1 %}
+                      {% set col_class = 'col-12 col-md-6 col-lg-4' %}
+                    {% else %}
+                      {% set is_multiline = (t in ['text', 'textarea']) or (f.rows is defined and (f.rows|int) > 1) %}
+                      {% set is_long = (t in ['str', 'secret'] and (vlen > 25 or plen > 25)) %}
+
+                      {% if is_multiline %}
+                        {% set col_class = 'col-12 col-lg-8' %}
+                      {% elif is_long %}
+                        {% set col_class = 'col-12 col-md-6 col-lg-8' %}
+                      {% else %}
+                        {% set col_class = 'col-12 col-md-6 col-lg-4' %}
+                      {% endif %}
+                    {% endif %}
+
+                    {{ render_field(f, v, errors.get(f.key), editable=editable, col_class=col_class) }}
+                  {% endfor %}
+
+                  {% if sec_fields|length == 0 %}
+                    <div class="col-12">
+                      <div class="text-muted small">Žádná pole.</div>
+                    </div>
+                  {% endif %}
+
+                </div>
+              </div>
+
+            </div>
+          {% endfor %}
+
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="d-flex justify-content-end mt-3">
+      <button type="submit" class="btn btn-primary" data-loading>
+        <span class="spinner-border spinner-border-sm d-none"></span>
+        <span class="btn-text">Uložit do .env</span>
+      </button>
+    </div>
+
+  </form>
+</div>
+{% endblock %}

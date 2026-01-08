@@ -32,6 +32,7 @@ from services_control import (
     stop_service_safe,
     get_service_detail,
 )
+from agenda_env import build_agenda_context, handle_agenda_post
 
 # načti .env ze stejného adresáře
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -752,8 +753,8 @@ def api_service_status(service_id):
     if not ok and err:
         return jsonify({"state": "unknown", "error": err}), 400
     return jsonify({"state": state})
-
-@app.route("/io-modbus-mqtt", methods=["GET"])
+######################### původní route pro testovací stránku #################
+@app.route("/io-modbus-mqtt", methods=["GET", "POST"])
 @login_required
 def io_modbus_mqtt():
     keys = [
@@ -793,9 +794,26 @@ def io_modbus_mqtt():
         service=service,
         service_status=state,
     )
+######################### původní route pro testovací stránku #################
 
+@app.route("/agenda/<agenda_id>", methods=["GET", "POST"])
+@login_required
+def agenda_env(agenda_id):
+    if request.method == "POST":
+        ok, ctx, msg = handle_agenda_post(agenda_id)
+        if ok:
+            flash(msg, "success")
+            return redirect(url_for("agenda_env", agenda_id=agenda_id))
+        # chyby -> render zpět
+        flash(msg, "error")
+        return render_template("agenda_env.html", title=ctx["agenda"]["title"], **ctx)
 
+    ok, ctx, msg = build_agenda_context(agenda_id)
+    if not ok:
+        flash(msg, "error")
+        return redirect(url_for("index"))
 
+    return render_template("agenda_env.html", title=ctx["agenda"]["title"], **ctx)
 
 
 #--------------------- END  NEW ROUTE pro NEW UI ----------------------
