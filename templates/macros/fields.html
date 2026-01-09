@@ -3,85 +3,87 @@
 
   {% set t = (field.type or 'str')|lower %}
   {% set id = 'f_' ~ field.key %}
-
-  {# Tooltip text (hover na poli / wrapperu) #}
   {% set tt = field.tooltip if field.tooltip is defined else '' %}
 
-  <div class="{{ col_class }}">
-    <label class="form-label" for="{{ id }}">
-      {{ field.label }}
-      {% if field.required %}<span class="text-danger">*</span>{% endif %}
-    </label>
+  {# INLINE FORCE WIDTH (prebije i globalni !important) #}
+  {% set force_style = "width:100% !important; max-width:none !important; display:block !important;" %}
 
-    {# Wrapper kvůli tooltipu i pro disabled prvky #}
-    <div class="field-wrap"
-         {% if tt %}data-bs-toggle="tooltip" data-bs-placement="top" title="{{ tt }}"{% endif %}>
+  <label class="form-label" for="{{ id }}">
+    {{ field.label }}
+    {% if field.required %}<span class="text-danger">*</span>{% endif %}
+  </label>
 
-      {% if t == 'text' %}
-        <textarea id="{{ id }}"
-                  name="{{ field.key }}"
-                  rows="{{ field.rows or 4 }}"
-                  class="form-control {% if error %}is-invalid{% endif %}"
-                  {% if not editable %}readonly{% endif %}
-                  placeholder="{{ field.placeholder or '' }}">{{ value }}</textarea>
+  {% if t == 'text' %}
+    <textarea id="{{ id }}"
+              name="{{ field.key }}"
+              rows="{{ field.rows or 4 }}"
+              class="form-control w-100 {% if error %}is-invalid{% endif %}"
+              style="{{ force_style }}"
+              {% if not editable %}readonly{% endif %}
+              {% if tt %}data-bs-toggle="tooltip" data-bs-placement="top" title="{{ tt }}"{% endif %}
+              placeholder="{{ field.placeholder or '' }}">{{ value }}</textarea>
 
-      {% elif t == 'select' %}
-        <select id="{{ id }}"
-                name="{{ field.key }}"
-                class="form-select {% if error %}is-invalid{% endif %}"
-                {% if not editable %}disabled{% endif %}>
-          {% if field.placeholder %}
-            <option value="" {% if not value %}selected{% endif %}>{{ field.placeholder }}</option>
-          {% endif %}
-          {% for c in field.choices or [] %}
-            <option value="{{ c }}" {% if value == c %}selected{% endif %}>{{ c }}</option>
-          {% endfor %}
-        </select>
-
-        {# disabled field se neodesílá -> pro readonly select použij hidden #}
-        {% if not editable %}
-          <input type="hidden" name="{{ field.key }}" value="{{ value }}">
-        {% endif %}
-
-      {% elif t == 'secret' %}
-        <input id="{{ id }}"
-               type="password"
-               name="{{ field.key }}"
-               class="form-control {% if error %}is-invalid{% endif %}"
-               {% if not editable %}readonly{% endif %}
-               placeholder="{{ field.placeholder or '' }}">
-        <div class="form-text">Nech prázdné = beze změny.</div>
-
-      {% elif t in ['int', 'float'] %}
-        <input id="{{ id }}"
-               type="number"
-               name="{{ field.key }}"
-               value="{{ value }}"
-               {% if t == 'float' %}step="any"{% else %}step="1"{% endif %}
-               {% if field.min is defined %}min="{{ field.min }}"{% endif %}
-               {% if field.max is defined %}max="{{ field.max }}"{% endif %}
-               class="form-control {% if error %}is-invalid{% endif %}"
-               {% if not editable %}readonly{% endif %}
-               placeholder="{{ field.placeholder or '' }}">
-
-      {% else %}
-        <input id="{{ id }}"
-               type="text"
-               name="{{ field.key }}"
-               value="{{ value }}"
-               class="form-control {% if error %}is-invalid{% endif %}"
-               {% if not editable %}readonly{% endif %}
-               placeholder="{{ field.placeholder or '' }}">
+  {% elif t == 'select' %}
+    <select id="{{ id }}"
+            name="{{ field.key }}"
+            class="form-select w-100 {% if error %}is-invalid{% endif %}"
+            style="{{ force_style }}"
+            {% if not editable %}disabled{% endif %}
+            {% if tt and editable %}data-bs-toggle="tooltip" data-bs-placement="top" title="{{ tt }}"{% endif %}>
+      {% if field.placeholder %}
+        <option value="" {% if not value %}selected{% endif %}>{{ field.placeholder }}</option>
       {% endif %}
+      {% for c in field.choices or [] %}
+        <option value="{{ c }}" {% if value == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
 
-    </div> {# /.field-wrap #}
-
-    {% if field.help %}
-      <div class="form-text">{{ field.help }}</div>
+    {% if not editable %}
+      <input type="hidden" name="{{ field.key }}" value="{{ value }}">
     {% endif %}
 
-    {% if error %}
-      <div class="invalid-feedback d-block">{{ error }}</div>
-    {% endif %}
-  </div>
+  {% elif t == 'secret' %}
+    <input id="{{ id }}"
+           type="password"
+           name="{{ field.key }}"
+           class="form-control w-100 {% if error %}is-invalid{% endif %}"
+           style="{{ force_style }}"
+           {% if not editable %}readonly{% endif %}
+           {% if tt %}data-bs-toggle="tooltip" data-bs-placement="top" title="{{ tt }}"{% endif %}
+           placeholder="{{ field.placeholder or '' }}">
+    <div class="form-text">Nech prázdné = beze změny.</div>
+
+  {% elif t in ['int', 'float'] %}
+    <input id="{{ id }}"
+           type="number"
+           name="{{ field.key }}"
+           value="{{ value }}"
+           {% if t == 'float' %}step="any"{% else %}step="1"{% endif %}
+           {% if field.min is defined %}min="{{ field.min }}"{% endif %}
+           {% if field.max is defined %}max="{{ field.max }}"{% endif %}
+           class="form-control w-100 {% if error %}is-invalid{% endif %}"
+           style="{{ force_style }}"
+           {% if not editable %}readonly{% endif %}
+           {% if tt %}data-bs-toggle="tooltip" data-bs-placement="top" title="{{ tt }}"{% endif %}
+           placeholder="{{ field.placeholder or '' }}">
+
+  {% else %}
+    <input id="{{ id }}"
+           type="text"
+           name="{{ field.key }}"
+           value="{{ value }}"
+           class="form-control w-100 {% if error %}is-invalid{% endif %}"
+           style="{{ force_style }}"
+           {% if not editable %}readonly{% endif %}
+           {% if tt %}data-bs-toggle="tooltip" data-bs-placement="top" title="{{ tt }}"{% endif %}
+           placeholder="{{ field.placeholder or '' }}">
+  {% endif %}
+
+  {% if field.help %}
+    <div class="form-text">{{ field.help }}</div>
+  {% endif %}
+
+  {% if error %}
+    <div class="invalid-feedback d-block">{{ error }}</div>
+  {% endif %}
 {% endmacro %}

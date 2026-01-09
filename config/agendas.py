@@ -245,5 +245,39 @@ AGENDAS = {
              "type": "str", "required": True, "placeholder": "homeassistant",
              "tooltip": "Prefix discovery topicu (typicky homeassistant)."},
         ],
+
+        "diagnostics": [
+            {
+                "id": "mqtt_latency",
+                "title": "MQTT latency test",
+                "tab": "diag",
+                "section": "diag_mqtt",
+                # co ukazat na karte (label, key, suffix)
+                "params": [
+                    {"label": "Count", "key": "MODBUS_IO_MQTT_LATENCY_COUNT"},
+                    {"label": "Interval", "key": "MODBUS_IO_MQTT_LATENCY_INTERVAL_MS", "suffix": "ms"},
+                    {"label": "Timeout", "key": "MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "suffix": "s"},
+                ],
+                "thresholds": [
+                    {"label": "OK/WARN", "keys": ["MODBUS_IO_MQTT_LATENCY_OK_MS", "MODBUS_IO_MQTT_LATENCY_WARN_MS"], "suffix": "ms"},
+                ],
+            },
+            {
+                "id": "modbus_rtt",
+                "title": "Modbus RTT test",
+                "tab": "diag",
+                "section": "diag_modbus",
+                "params": [
+                    {"label": "Samples", "key": "MODBUS_IO_MODBUS_RTT_SAMPLES"},
+                    {"label": "Interval", "key": "MODBUS_IO_MODBUS_RTT_INTERVAL_MS", "suffix": "ms"},
+                    {"label": "Method", "key": "MODBUS_IO_MODBUS_RTT_METHOD"},
+                    {"label": "Addr", "key": "MODBUS_IO_MODBUS_RTT_ADDR"},
+                    {"label": "Count", "key": "MODBUS_IO_MODBUS_RTT_COUNT"},
+                ],
+                "thresholds": [
+                    {"label": "OK/WARN", "keys": ["MODBUS_IO_MODBUS_RTT_OK_MS", "MODBUS_IO_MODBUS_RTT_WARN_MS"], "suffix": "ms"},
+                ],
+            },
+        ],
     }
 }

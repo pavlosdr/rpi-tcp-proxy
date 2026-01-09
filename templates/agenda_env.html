@@ -5,19 +5,31 @@
 <div class="container py-3 agenda-env">
 
   <style>
+    /* Fix: udrz konstantni "gutter" a zabran globalnim flex/gap prepisum */
     .agenda-env .env-grid {
-      --bs-gutter-x: 16px;
-      --bs-gutter-y: 12px;
+      --bs-gutter-x: 16px !important;
+      --bs-gutter-y: 12px !important;
+
+      /* kdyby nekde bylo space-between/gap */
+      justify-content: flex-start !important;
+      gap: 0 !important;
     }
 
-    .agenda-env .env-grid .form-control,
-    .agenda-env .env-grid .form-select,
-    .agenda-env .env-grid textarea,
-    .agenda-env .env-grid .input-group {
+    /* Fix: inputy/selecty MUSI byt block + 100% sirka (prebije width:auto) */
+    .agenda-env .env-grid input.form-control,
+    .agenda-env .env-grid select.form-select,
+    .agenda-env .env-grid textarea.form-control,
+    .agenda-env .env-grid textarea {
+      display: block !important;
       width: 100% !important;
       max-width: none !important;
     }
 
+    /* Pojistka pro input-group */
+    .agenda-env .env-grid .input-group {
+      width: 100% !important;
+      max-width: none !important;
+    }
     .agenda-env .env-grid .input-group > .form-control,
     .agenda-env .env-grid .input-group > .form-select {
       flex: 1 1 auto;
@@ -71,8 +83,7 @@
              role="tabpanel">
 
           {% for sec in sections if sec.tab == tab.id %}
-            <div class="card shadow-sm mb-3">
-
+            <div class="card shadow-sm mb-3" id="sec-{{ sec.id }}">
               <div class="card-header bg-primary text-white py-2 d-flex justify-content-between align-items-center">
                 <div>
                   <strong>{{ sec.label }}</strong>
@@ -83,16 +94,14 @@
 
                 {% if sec.tooltip %}
                   <i class="bi bi-question-circle-fill"
-                     role="button"
-                     tabindex="0"
                      data-bs-toggle="tooltip"
                      data-bs-placement="top"
-                     title="{{ sec.tooltip|e }}"></i>
+                     title="{{ sec.tooltip }}"></i>
                 {% endif %}
               </div>
 
               <div class="card-body">
-                <div class="row env-grid">
+                <div class="row env-grid gx-3 gy-2">
 
                   {% set sec_fields = (fields
                     | selectattr("tab", "equalto", tab.id)
@@ -102,11 +111,9 @@
                   {% for f in sec_fields %}
                     {% set editable = (f.editable is not defined) or f.editable %}
                     {% set t = (f.type or 'str')|lower %}
-                    {% set v = (values.get(f.key, '') or '') %}
+                    {% set v = values.get(f.key, '') %}
                     {% set vlen = v|length %}
-                    {% set plen = ((f.placeholder or '')|length) %}
-
-                    {# šířka - auto / span #}
+                    {% set plen = (f.placeholder or '')|length %}
                     {% set span = (f.span if f.span is defined else 0) %}
 
                     {% if span == 3 or t == 'textarea' %}
@@ -128,7 +135,9 @@
                       {% endif %}
                     {% endif %}
 
-                    {{ render_field(f, v, errors.get(f.key), editable=editable, col_class=col_class) }}
+                    <div class="{{ col_class }}">
+                      {{ render_field(f, v, errors.get(f.key), editable=editable) }}
+                    </div>
                   {% endfor %}
 
                   {% if sec_fields|length == 0 %}
@@ -139,7 +148,6 @@
 
                 </div>
               </div>
-
             </div>
           {% endfor %}
 
@@ -156,4 +164,77 @@
 
   </form>
 </div>
+
+<script>
+  window.addEventListener("load", function () {
+    // Tooltippy (pokud už je inituje base.html, getOrCreateInstance je bezpečné)
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+      try {
+        if (window.bootstrap && bootstrap.Tooltip) {
+          bootstrap.Tooltip.getOrCreateInstance(el);
+        }
+      } catch (e) {}
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    const tabId = params.get("tab");
+    const secId = params.get("sec");
+
+    function scrollToSection() {
+      if (!secId) return;
+      const el = document.getElementById(`sec-${secId}`);
+      if (!el) return;
+
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+
+      // jemné zvýraznění
+      el.classList.add("border", "border-warning");
+      setTimeout(() => el.classList.remove("border", "border-warning"), 1500);
+    }
+
+    // Aktivace tabu z URL
+    let tabBtn = null;
+    if (tabId) {
+      tabBtn = document.querySelector(
+        `button[data-bs-toggle="tab"][data-bs-target="#tab-${tabId}"]`
+      );
+    }
+
+    if (tabBtn && window.bootstrap && bootstrap.Tab) {
+      // pokud chceme i scroll na sekci, připoj listener ještě před show()
+      if (secId) {
+        tabBtn.addEventListener("shown.bs.tab", function () {
+          setTimeout(scrollToSection, 80);
+        }, { once: true });
+      }
+
+      try {
+        bootstrap.Tab.getOrCreateInstance(tabBtn).show();
+      } catch (e) {}
+
+      // kdyby už byl aktivní nebo event neproběhl (např. stejné tabu)
+      if (secId && tabBtn.classList.contains("active")) {
+        setTimeout(scrollToSection, 120);
+      }
+    } else {
+      // bez tabu jen scroll
+      if (secId) setTimeout(scrollToSection, 120);
+    }
+
+    // Udržuj ?tab=... v URL při ručním přepnutí tabu
+    document.querySelectorAll('button[data-bs-toggle="tab"]').forEach(btn => {
+      btn.addEventListener("shown.bs.tab", function (e) {
+        const target = e.target.getAttribute("data-bs-target"); // #tab-xxx
+        if (!target) return;
+
+        const id = target.replace("#tab-", "");
+        const url = new URL(window.location.href);
+        url.searchParams.set("tab", id);
+        url.searchParams.delete("sec"); // po ručním přepnutí sekci radši smaž
+        history.replaceState({}, "", url.toString());
+      });
+    });
+  });
+</script>
+
 {% endblock %}

@@ -32,7 +32,9 @@ from services_control import (
     stop_service_safe,
     get_service_detail,
 )
+from envfile import read_env_file
 from agenda_env import build_agenda_context, handle_agenda_post
+from config.agendas import AGENDAS
 
 # načti .env ze stejného adresáře
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -378,6 +380,12 @@ def network():
     import ipaddress
     import os
 
+    # pro diag_cards (a obecně metadata agend)
+    try:
+        from config.agendas import AGENDAS
+    except Exception:
+        AGENDAS = {}
+
     def _get_field(r, key, default=None):
         # umí dict i objekt
         if isinstance(r, dict):
@@ -456,6 +464,75 @@ def network():
 
         return ("ok", "success")
 
+    def _to_int(x, default=0):
+        try:
+            return int(str(x).strip())
+        except Exception:
+            return default
+
+    def _to_float_safe(x, default=0.0):
+        try:
+            return float(str(x).strip())
+        except Exception:
+            return default
+
+    # ------------------------------------------------------------
+    # Načtení .env přes existující read_env_file()
+    # ------------------------------------------------------------
+    # pro tuto aplikaci je .env obvykle /opt/rpi-admin-ui/.env
+    env_path = (AGENDAS.get("io-modbus-mqtt", {}) or {}).get("env_path") or "/opt/rpi-admin-ui/.env"
+    env_values, _env_lines = read_env_file(env_path)
+
+    # ------------------------------------------------------------
+    # diag_cards (aktuální konfigurace testů + deep-link do agendy)
+    # ------------------------------------------------------------
+    diag_cards = []
+    for agenda_id, agenda in (AGENDAS or {}).items():
+        diags = agenda.get("diagnostics") or []
+        if not diags:
+            continue
+
+        a_env_path = agenda.get("env_path") or env_path
+        a_env_values = env_values if a_env_path == env_path else read_env_file(a_env_path)[0]
+
+        for d in diags:
+            params = []
+            for p in d.get("params", []):
+                key = p.get("key", "")
+                params.append({
+                    "label": p.get("label", key),
+                    "value": a_env_values.get(key, ""),
+                    "suffix": p.get("suffix", ""),
+                    "key": key,
+                })
+
+            thresholds = []
+            for th in d.get("thresholds", []):
+                ks = th.get("keys") or []
+                a = a_env_values.get(ks[0], "") if len(ks) > 0 else ""
+                b = a_env_values.get(ks[1], "") if len(ks) > 1 else ""
+                thresholds.append({
+                    "label": th.get("label", "Threshold"),
+                    "value": f"{a}/{b}",
+                    "suffix": th.get("suffix", ""),
+                })
+
+            edit_url = url_for(
+                "agenda_env",
+                agenda_id=agenda_id,
+                tab=d.get("tab", ""),
+                sec=d.get("section", ""),
+            )
+
+            diag_cards.append({
+                "agenda_id": agenda_id,
+                "agenda_title": agenda.get("title", agenda_id),
+                "title": d.get("title", d.get("id", "diagnostic")),
+                "edit_url": edit_url,
+                "params": params,
+                "thresholds": thresholds,
+            })
+
     ping_results = []
     iperf_result = None
     mqtt_latency = None  # posíláme do šablony
@@ -486,23 +563,20 @@ def network():
 
         elif action == "mqtt_latency":
             try:
-                # Použij MODBUS_IO_MQTT_* (správně)
-                host = os.getenv("MODBUS_IO_MQTT_HOST", "192.168.1.20")
-                port = int(os.getenv("MODBUS_IO_MQTT_PORT", "1883"))
-                user = os.getenv("MODBUS_IO_MQTT_USERNAME", "")
-                pwd  = os.getenv("MODBUS_IO_MQTT_PASSWORD", "")
+                # Konfigurace z .env přes read_env_file
+                host = env_values.get("MODBUS_IO_MQTT_HOST", "192.168.1.20")
+                port = _to_int(env_values.get("MODBUS_IO_MQTT_PORT", "1883"), 1883)
+                user = env_values.get("MODBUS_IO_MQTT_USERNAME", "")
+                pwd  = env_values.get("MODBUS_IO_MQTT_PASSWORD", "")
 
-                # parametry testu (env nebo rozumné defaulty)
-                samples = int(os.getenv("MODBUS_IO_MQTT_LATENCY_COUNT", "10"))
-                interval_ms = int(os.getenv("MODBUS_IO_MQTT_LATENCY_INTERVAL_MS", "100"))
-                timeout_s = float(os.getenv("MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "2.0"))
+                samples = _to_int(env_values.get("MODBUS_IO_MQTT_LATENCY_COUNT", "10"), 10)
+                interval_ms = _to_int(env_values.get("MODBUS_IO_MQTT_LATENCY_INTERVAL_MS", "100"), 100)
+                timeout_s = _to_float_safe(env_values.get("MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "2.0"), 2.0)
 
-                # topic prefix (NE base_topic z brokeru; pro diagnostiku raději odděleně)
-                topic_prefix = os.getenv("MODBUS_IO_MQTT_LATENCY_TOPIC_PREFIX", "diag/mqtt_latency")
+                topic_prefix = env_values.get("MODBUS_IO_MQTT_LATENCY_TOPIC_PREFIX", "diag/mqtt_latency")
 
-                # limity pro semafor (ms) – můžeš pak přidat i do .env/UI
-                ok_ms = float(os.getenv("MODBUS_IO_MQTT_LATENCY_OK_MS", "30"))
-                warn_ms = float(os.getenv("MODBUS_IO_MQTT_LATENCY_WARN_MS", "80"))
+                ok_ms = _to_float_safe(env_values.get("MODBUS_IO_MQTT_LATENCY_OK_MS", "30"), 30.0)
+                warn_ms = _to_float_safe(env_values.get("MODBUS_IO_MQTT_LATENCY_WARN_MS", "80"), 80.0)
 
                 result = get_mqtt_latency_test(
                     host=host,
@@ -515,7 +589,6 @@ def network():
                     topic_prefix=topic_prefix,
                 )
 
-                # když helper vrátí None/prázdno
                 if not result:
                     mqtt_latency = {
                         "error": "MQTT latency test nevrátil žádná data (None / prázdný výsledek).",
@@ -533,7 +606,6 @@ def network():
                         "details": [],
                     }
                 else:
-                    # doplň semafor + badge, aby šablona fungovala
                     sem, badge = _semafor_from_latency(
                         result.get("avg_ms"),
                         result.get("p95_ms"),
@@ -565,52 +637,58 @@ def network():
                 }
 
         elif action == "modbus_rtt":
-            # Vezmi stejné parametry jako broker
-            port = os.getenv("MODBUS_IO_MODBUS_PORT", "/dev/ttyUSB0")
-            baudrate = int(os.getenv("MODBUS_IO_MODBUS_BAUDRATE", "9600"))
-            parity = os.getenv("MODBUS_IO_MODBUS_PARITY", "N")
-            stopbits = int(os.getenv("MODBUS_IO_MODBUS_STOPBITS", "1"))
-            bytesize = int(os.getenv("MODBUS_IO_MODBUS_BYTESIZE", "8"))
-            timeout_s = float(os.getenv("MODBUS_IO_MODBUS_TIMEOUT", "0.5"))
+            try:
+                # Parametry z .env přes read_env_file
+                port = env_values.get("MODBUS_IO_MODBUS_PORT", "/dev/ttyUSB0")
+                baudrate = _to_int(env_values.get("MODBUS_IO_MODBUS_BAUDRATE", "9600"), 9600)
+                parity = env_values.get("MODBUS_IO_MODBUS_PARITY", "N")
+                stopbits = _to_int(env_values.get("MODBUS_IO_MODBUS_STOPBITS", "1"), 1)
+                bytesize = _to_int(env_values.get("MODBUS_IO_MODBUS_BYTESIZE", "8"), 8)
+                timeout_s = _to_float_safe(env_values.get("MODBUS_IO_MODBUS_TIMEOUT", "0.5"), 0.5)
 
-            # slave list z MODBUS_IO_SLAVES
-            slaves_raw = os.getenv("MODBUS_IO_SLAVES", "")
-            slaves = [int(x.strip()) for x in slaves_raw.split(",") if x.strip().isdigit()]
+                slaves_raw = env_values.get("MODBUS_IO_SLAVES", "")
+                slaves = []
+                for x in (slaves_raw or "").split(","):
+                    x = (x or "").strip()
+                    if x.isdigit():
+                        slaves.append(int(x))
 
-            # parametry testu
-            samples = int(os.getenv("MODBUS_IO_MODBUS_RTT_SAMPLES", "30"))
-            interval_ms = int(os.getenv("MODBUS_IO_MODBUS_RTT_INTERVAL_MS", "50"))
-            method = os.getenv("MODBUS_IO_MODBUS_RTT_METHOD", "di")  # di/hr
-            address = int(os.getenv("MODBUS_IO_MODBUS_RTT_ADDR", "0"))
-            count = int(os.getenv("MODBUS_IO_MODBUS_RTT_COUNT", "1"))
+                samples = _to_int(env_values.get("MODBUS_IO_MODBUS_RTT_SAMPLES", "30"), 30)
+                interval_ms = _to_int(env_values.get("MODBUS_IO_MODBUS_RTT_INTERVAL_MS", "50"), 50)
+                method = env_values.get("MODBUS_IO_MODBUS_RTT_METHOD", "di")
+                address = _to_int(env_values.get("MODBUS_IO_MODBUS_RTT_ADDR", "0"), 0)
+                count = _to_int(env_values.get("MODBUS_IO_MODBUS_RTT_COUNT", "1"), 1)
 
-            ok_ms = float(os.getenv("MODBUS_IO_MODBUS_RTT_OK_MS", "50"))
-            warn_ms = float(os.getenv("MODBUS_IO_MODBUS_RTT_WARN_MS", "150"))
+                ok_ms = _to_float_safe(env_values.get("MODBUS_IO_MODBUS_RTT_OK_MS", "50"), 50.0)
+                warn_ms = _to_float_safe(env_values.get("MODBUS_IO_MODBUS_RTT_WARN_MS", "150"), 150.0)
 
-            modbus_rtt = get_modbus_rtt_test(
-                port=port,
-                baudrate=baudrate,
-                parity=parity,
-                stopbits=stopbits,
-                bytesize=bytesize,
-                timeout_s=timeout_s,
-                slaves=slaves,
-                samples=samples,
-                interval_ms=interval_ms,
-                address=address,
-                count=count,
-                method=method,
-                ok_ms=ok_ms,
-                warn_ms=warn_ms,
-            )
+                modbus_rtt = get_modbus_rtt_test(
+                    port=port,
+                    baudrate=baudrate,
+                    parity=parity,
+                    stopbits=stopbits,
+                    bytesize=bytesize,
+                    timeout_s=timeout_s,
+                    slaves=slaves,
+                    samples=samples,
+                    interval_ms=interval_ms,
+                    address=address,
+                    count=count,
+                    method=method,
+                    ok_ms=ok_ms,
+                    warn_ms=warn_ms,
+                )
+            except Exception as e:
+                modbus_rtt = {"error": str(e)}
 
     return render_template(
         "network.html",
         ping_results=ping_results,
         iperf_result=iperf_result,
         mqtt_latency=mqtt_latency,
-        modbus_rtt=modbus_rtt,  
-        vnstat_stats=get_all_vnstat_stats(),  # tabulky vnstat na Network stránce
+        modbus_rtt=modbus_rtt,
+        diag_cards=diag_cards,  # nove
+        vnstat_stats=get_all_vnstat_stats(),
         default_targets=default_targets,
         iperf_ip=request.form.get("iperf_ip", "192.168.1.20") if request.method == "POST" else "192.168.1.20",
         duration=request.form.get("duration", 10) if request.method == "POST" else 10,
