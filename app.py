@@ -472,7 +472,7 @@ def network():
 
     def _to_float_safe(x, default=0.0):
         try:
-            return float(str(x).strip())
+            return float(str(x).strip().replace(",", "."))
         except Exception:
             return default
 
@@ -525,6 +525,7 @@ def network():
             )
 
             diag_cards.append({
+                "id": d.get("id", ""),
                 "agenda_id": agenda_id,
                 "agenda_title": agenda.get("title", agenda_id),
                 "title": d.get("title", d.get("id", "diagnostic")),
