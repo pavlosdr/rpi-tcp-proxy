@@ -15,74 +15,17 @@
   </div>
 
   {# ------------------------------------------------------------
-     Aktuální konfigurace diagnostických testů (z diag_cards)
+     Vytáhnout konfigurace testů z diag_cards (pokud existují)
      ------------------------------------------------------------ #}
+  {% set mqtt_cfg = None %}
+  {% set modbus_cfg = None %}
+
   {% if diag_cards %}
-    <div class="card shadow-sm mb-4">
-      <div class="card-header d-flex justify-content-between align-items-center">
-        <strong>Aktuální konfigurace testů</strong>
-        <span class="text-muted small">přebíráno z .env / agend</span>
-      </div>
-      <div class="card-body">
-        <div class="row g-3">
+    {% set mqtt_list = (diag_cards | selectattr("id", "equalto", "mqtt_latency") | list) %}
+    {% set modbus_list = (diag_cards | selectattr("id", "equalto", "modbus_rtt") | list) %}
 
-          {% for c in diag_cards %}
-            <div class="col-12 col-lg-6">
-              <div class="card h-100 border">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                  <div class="me-2">
-                    <div class="fw-semibold">{{ c.title }}</div>
-                    <div class="text-muted small">{{ c.agenda_title }}</div>
-                  </div>
-                  <a class="btn btn-sm btn-outline-secondary"
-                     href="{{ c.edit_url }}"
-                     data-bs-toggle="tooltip"
-                     title="Otevře konfiguraci v agendě na správném tabu/sekci">
-                    Upravit konfiguraci
-                  </a>
-                </div>
-
-                <div class="card-body">
-                  {% if c.params %}
-                    <div class="mb-2 text-muted small">Parametry:</div>
-                    <div class="d-flex flex-wrap gap-2">
-                      {% for p in c.params %}
-                        <span class="badge bg-light text-dark border"
-                              data-bs-toggle="tooltip"
-                              title="{{ p.key }}">
-                          {{ p.label }}: <strong>{{ p.value if p.value != '' else '—' }}</strong>{{ p.suffix }}
-                        </span>
-                      {% endfor %}
-                    </div>
-                  {% endif %}
-
-                  {% if c.thresholds %}
-                    <hr class="my-3">
-                    <div class="mb-2 text-muted small">Prahy:</div>
-                    <div class="d-flex flex-wrap gap-2">
-                      {% for t in c.thresholds %}
-                        <span class="badge bg-light text-dark border">
-                          {{ t.label }}: <strong>{{ t.value if t.value != '' else '—' }}</strong>{{ t.suffix }}
-                        </span>
-                      {% endfor %}
-                    </div>
-                  {% endif %}
-
-                  {% if not c.params and not c.thresholds %}
-                    <div class="text-muted small">Konfigurace pro tuto kartu není definovaná.</div>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          {% endfor %}
-
-        </div>
-
-        <div class="text-muted small mt-3">
-          Pozn.: tyto hodnoty jsou pouze “read-only náhled” – změny prováděj přes agendu.
-        </div>
-      </div>
-    </div>
+    {% if mqtt_list and mqtt_list|length > 0 %}{% set mqtt_cfg = mqtt_list[0] %}{% endif %}
+    {% if modbus_list and modbus_list|length > 0 %}{% set modbus_cfg = modbus_list[0] %}{% endif %}
   {% endif %}
 
   <form method="post" class="needs-validation" novalidate id="networkForm">
@@ -198,45 +141,149 @@
         </div>
       </div>
 
-      <!-- MQTT Latency -->
+      <!-- MQTT Latency (konfigurace + tlačítko + výsledek v jednom) -->
       <div class="col-12">
         <div class="card shadow-sm">
           <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-            <strong>MQTT latency test</strong>
-            <i class="bi bi-question-circle-fill"
-              data-bs-toggle="tooltip"
-              title="Testuje publish -> broker -> receive do stejného klienta. Běží jen na vyžádání."></i>
+            <div class="d-flex align-items-center gap-2">
+              <strong>MQTT latency test</strong>
+              <i class="bi bi-question-circle-fill"
+                data-bs-toggle="tooltip"
+                title="Testuje publish -> broker -> receive do stejného klienta. Běží jen na vyžádání."></i>
+            </div>
+
+            <div class="d-flex gap-2">
+              {% if mqtt_cfg and mqtt_cfg.edit_url %}
+                <a class="btn btn-sm btn-outline-light"
+                   href="{{ mqtt_cfg.edit_url }}"
+                   data-bs-toggle="tooltip"
+                   title="Otevře konfiguraci v agendě na správném tabu/sekci">
+                  Upravit konfiguraci
+                </a>
+              {% endif %}
+
+              <button type="button" class="btn btn-sm btn-outline-light" id="btnMqttLatency">
+                <span class="btn-label">
+                  <i class="bi bi-stopwatch me-1"></i>Spustit
+                </span>
+                <span class="btn-loading d-none">
+                  <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Probíhá…
+                </span>
+              </button>
+            </div>
           </div>
-          <div class="card-body d-flex align-items-center justify-content-between flex-wrap gap-2">
-            <div class="text-muted small">
+
+          <div class="card-body">
+            <div class="text-muted small mb-2">
               Spustí N vzorků v intervalu. Nejde o throughput, ale o odezvu MQTT brokeru a sítě.
             </div>
 
-            <button type="button" class="btn btn-outline-dark" id="btnMqttLatency">
-              <span class="btn-label">
-                <i class="bi bi-stopwatch me-1"></i>Spustit MQTT latency
-              </span>
-              <span class="btn-loading d-none">
-                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                Probíhá…
-              </span>
-            </button>
+            {% if mqtt_cfg %}
+              <div class="small mb-2">
+                <div class="text-muted">Aktuální konfigurace (read-only náhled):</div>
+
+                {% if mqtt_cfg.params %}
+                  <div class="d-flex flex-wrap gap-2 mt-1">
+                    {% for p in mqtt_cfg.params %}
+                      <span class="badge bg-light text-dark border"
+                            data-bs-toggle="tooltip"
+                            title="{{ p.key }}">
+                        {{ p.label }}: <strong>{{ p.value if p.value != '' else '—' }}</strong>{{ p.suffix }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+
+                {% if mqtt_cfg.thresholds %}
+                  <div class="d-flex flex-wrap gap-2 mt-2">
+                    {% for t in mqtt_cfg.thresholds %}
+                      <span class="badge bg-light text-dark border">
+                        {{ t.label }}: <strong>{{ t.value if t.value != '' else '—' }}</strong>{{ t.suffix }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
+
+            {% if mqtt_latency %}
+              <hr class="my-3">
+
+              <div class="d-flex justify-content-between align-items-center">
+                <strong>Výsledek</strong>
+                {% if mqtt_latency.badge %}
+                  <span class="badge bg-{{ mqtt_latency.badge }}">
+                    {% if mqtt_latency.semafor == 'ok' %}OK{% elif mqtt_latency.semafor == 'warning' %}VAROVÁNÍ{% elif mqtt_latency.semafor == 'bad' %}ŠPATNÉ{% else %}NEZNÁMÉ{% endif %}
+                  </span>
+                {% endif %}
+              </div>
+
+              <div class="mt-2">
+                {% if mqtt_latency.error %}
+                  <div class="alert alert-danger mb-0">
+                    <strong>Chyba:</strong> {{ mqtt_latency.error }}
+                  </div>
+                {% else %}
+                  <div class="row g-3">
+                    <div class="col-12 col-lg-6">
+                      <table class="table table-sm align-middle mb-0">
+                        <tbody>
+                          <tr><th style="width: 220px;">Odesláno / Přijato</th><td>{{ mqtt_latency.sent }} / {{ mqtt_latency.received }}</td></tr>
+                          <tr><th>Ztráta</th><td>{{ mqtt_latency.loss }}</td></tr>
+                          <tr><th>Min / Avg / P95 / Max (ms)</th><td>{{ mqtt_latency.min_ms }} / {{ mqtt_latency.avg_ms }} / {{ mqtt_latency.p95_ms }} / {{ mqtt_latency.max_ms }}</td></tr>
+                          <tr><th>Limity (OK / VAROVÁNÍ ms)</th><td>{{ mqtt_latency.ok_ms }} / {{ mqtt_latency.warn_ms }}</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div class="col-12 col-lg-6">
+                      <div class="text-muted small mb-2">Detaily (prvních 20):</div>
+                      <pre class="mb-0" style="white-space: pre-wrap;">{% for d in (mqtt_latency.details[:20] if mqtt_latency.details else []) %}seq={{ d.seq }} rtt_ms={{ d.rtt_ms }}
+{% endfor %}</pre>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
           </div>
         </div>
       </div>
 
-      <!-- MODBUS RTT -->
+      <!-- MODBUS RTT (konfigurace + tlačítko + výsledek v jednom) -->
       <div class="col-12">
         <div class="card shadow-sm">
           <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
-            <strong>Modbus RTT test (RTU) – servisní</strong>
-            <i class="bi bi-question-circle-fill"
-              data-bs-toggle="tooltip"
-              title="Servisní Modbus RTU test: měří čistou odezvu sběrnice (request/response). Vyžaduje zastavení brokeru."></i>
+            <div class="d-flex align-items-center gap-2">
+              <strong>Modbus RTT test (RTU) – servisní</strong>
+              <i class="bi bi-question-circle-fill"
+                data-bs-toggle="tooltip"
+                title="Servisní Modbus RTU test: měří čistou odezvu sběrnice (request/response). Vyžaduje zastavení brokeru."></i>
+            </div>
+
+            <div class="d-flex gap-2">
+              {% if modbus_cfg and modbus_cfg.edit_url %}
+                <a class="btn btn-sm btn-outline-light"
+                   href="{{ modbus_cfg.edit_url }}"
+                   data-bs-toggle="tooltip"
+                   title="Otevře konfiguraci v agendě na správném tabu/sekci">
+                  Upravit konfiguraci
+                </a>
+              {% endif %}
+
+              <button type="button" class="btn btn-sm btn-outline-light" id="btnModbusRtt">
+                <span class="btn-label">
+                  <i class="bi bi-activity me-1"></i>Spustit
+                </span>
+                <span class="btn-loading d-none">
+                  <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Probíhá…
+                </span>
+              </button>
+            </div>
           </div>
 
           <div class="card-body">
-
             <!-- VÝRAZNÉ UPOZORNĚNÍ -->
             <div class="alert alert-danger d-flex align-items-start gap-2 mb-3">
               <i class="bi bi-exclamation-triangle-fill fs-5"></i>
@@ -250,34 +297,100 @@
               </div>
             </div>
 
-            <!-- VYSVĚTLENÍ ÚČELU -->
             <div class="alert alert-info mb-3">
               <strong>Účel testu:</strong><br>
               Test měří <strong>čistou odezvu Modbus RTU sběrnice</strong> (slave ↔ master) bez vlivu MQTT a aplikační logiky.
               Slouží k ověření správného zapojení, časování, počtu modulů a nastavení timeoutů.
             </div>
 
-            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-              <div class="text-muted small">
-                RTT je čas jednoho dotazu na sběrnici. Problémy se projeví zvýšeným P95 nebo ztrátami (timeout/isError).
+            {% if modbus_cfg %}
+              <div class="small mb-2">
+                <div class="text-muted">Aktuální konfigurace (read-only náhled):</div>
+
+                {% if modbus_cfg.params %}
+                  <div class="d-flex flex-wrap gap-2 mt-1">
+                    {% for p in modbus_cfg.params %}
+                      <span class="badge bg-light text-dark border"
+                            data-bs-toggle="tooltip"
+                            title="{{ p.key }}">
+                        {{ p.label }}: <strong>{{ p.value if p.value != '' else '—' }}</strong>{{ p.suffix }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+
+                {% if modbus_cfg.thresholds %}
+                  <div class="d-flex flex-wrap gap-2 mt-2">
+                    {% for t in modbus_cfg.thresholds %}
+                      <span class="badge bg-light text-dark border">
+                        {{ t.label }}: <strong>{{ t.value if t.value != '' else '—' }}</strong>{{ t.suffix }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
+
+            {% if modbus_rtt %}
+              <hr class="my-3">
+
+              <div class="d-flex justify-content-between align-items-center">
+                <strong>Výsledek</strong>
+                {% if modbus_rtt.badge %}
+                  <span class="badge bg-{{ modbus_rtt.badge }}">
+                    {% if modbus_rtt.semafor == 'ok' %}OK{% elif modbus_rtt.semafor == 'warning' %}VAROVÁNÍ{% elif modbus_rtt.semafor == 'bad' %}ŠPATNÉ{% else %}NEZNÁMÉ{% endif %}
+                  </span>
+                {% endif %}
               </div>
 
-              <div class="text-end">
-                <button type="button" class="btn btn-outline-danger" id="btnModbusRtt">
-                  <span class="btn-label">
-                    <i class="bi bi-activity me-1"></i>Spustit Modbus RTT (servisní)
-                  </span>
-                  <span class="btn-loading d-none">
-                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                    Probíhá…
-                  </span>
-                </button>
-                <div class="form-text text-danger mt-1">
-                  Před spuštěním <strong>zastav RPi Modbus IO Broker</strong>.
-                </div>
-              </div>
-            </div>
+              <div class="mt-2">
+                {% if modbus_rtt.error %}
+                  <div class="alert alert-danger mb-3">
+                    <strong>Chyba:</strong> {{ modbus_rtt.error }}
+                  </div>
 
+                  <div class="alert alert-warning mb-0">
+                    <strong>Test nebyl kompletní.</strong><br>
+                    Pravděpodobná příčina: běžící <code>RPi Modbus IO Broker</code>, který má otevřený Modbus port.
+                  </div>
+                {% else %}
+                  <div class="alert alert-success mb-3">
+                    <strong>Sběrnice v pořádku.</strong><br>
+                    Odezvy a ztráty odpovídají aktuálnímu počtu slave a nastavení časování.
+                  </div>
+
+                  <div class="row g-3">
+                    <div class="col-12 col-lg-6">
+                      <table class="table table-sm align-middle mb-0">
+                        <tbody>
+                          <tr><th style="width: 220px;">Odesláno / Přijato</th><td>{{ modbus_rtt.sent }} / {{ modbus_rtt.received }}</td></tr>
+                          <tr><th>Ztráta</th><td>{{ modbus_rtt.loss }}</td></tr>
+                          <tr><th>Min / Avg / P95 / Max (ms)</th><td>{{ modbus_rtt.min_ms }} / {{ modbus_rtt.avg_ms }} / {{ modbus_rtt.p95_ms }} / {{ modbus_rtt.max_ms }}</td></tr>
+                          <tr><th>Limity (OK / VAROVÁNÍ ms)</th><td>{{ modbus_rtt.ok_ms }} / {{ modbus_rtt.warn_ms }}</td></tr>
+                          <tr><th>Metoda</th><td>{{ modbus_rtt.method }} (addr={{ modbus_rtt.address }}, count={{ modbus_rtt.count }})</td></tr>
+                          <tr><th>Slaves</th><td><code>{{ modbus_rtt.slaves }}</code></td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div class="col-12 col-lg-6">
+                      <div class="text-muted small mb-2">Detaily (prvních 20):</div>
+                      <pre class="mb-0" style="white-space: pre-wrap;">{% for d in (modbus_rtt.details[:20] if modbus_rtt.details else []) %}seq={{ d.seq }} unit={{ d.unit }} rtt_ms={{ d.rtt_ms }}
+{% endfor %}</pre>
+                    </div>
+                  </div>
+
+                  <div class="alert alert-secondary small mt-3 mb-0">
+                    <strong>Jak číst výsledky:</strong>
+                    <ul class="mb-0">
+                      <li><strong>RTT ~20–40 ms</strong> – typické pro stabilní Modbus RTU s více slave</li>
+                      <li><strong>Ztráta &gt; 0</strong> – problém s časováním, rušením nebo konfliktem portu</li>
+                      <li><strong>Velký rozptyl</strong> – příliš krátký timeout nebo přetížení sběrnice</li>
+                    </ul>
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -375,117 +488,6 @@
       {% endif %}
 
       <pre class="mb-0" style="white-space: pre-wrap;">{% if iperf_result.error %}Chyba: {{ iperf_result.error }}{% else %}{{ iperf_result.summary }}{% endif %}</pre>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Výsledky MQTT Latency -->
-  {% if mqtt_latency %}
-  <div class="card shadow-sm mt-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <strong>Výsledek MQTT latency</strong>
-      {% if mqtt_latency.badge %}
-        <span class="badge bg-{{ mqtt_latency.badge }}">
-          {% if mqtt_latency.semafor == 'ok' %}OK{% elif mqtt_latency.semafor == 'warning' %}VAROVÁNÍ{% elif mqtt_latency.semafor == 'bad' %}ŠPATNÉ{% else %}NEZNÁMÉ{% endif %}
-        </span>
-      {% endif %}
-    </div>
-    <div class="card-body">
-      {% if mqtt_latency.error %}
-        <div class="alert alert-danger mb-3">
-          <strong>Chyba:</strong> {{ mqtt_latency.error }}
-        </div>
-      {% else %}
-        <div class="row g-3">
-          <div class="col-12 col-lg-6">
-            <table class="table table-sm align-middle mb-0">
-              <tbody>
-                <tr><th style="width: 220px;">Odesláno / Přijato</th><td>{{ mqtt_latency.sent }} / {{ mqtt_latency.received }}</td></tr>
-                <tr><th>Ztráta</th><td>{{ mqtt_latency.loss }}</td></tr>
-                <tr>
-                  <th>Min / Avg / P95 / Max (ms)</th>
-                  <td>{{ mqtt_latency.min_ms }} / {{ mqtt_latency.avg_ms }} / {{ mqtt_latency.p95_ms }} / {{ mqtt_latency.max_ms }}</td>
-                </tr>
-                <tr><th>Limity (OK / VAROVÁNÍ ms)</th><td>{{ mqtt_latency.ok_ms }} / {{ mqtt_latency.warn_ms }}</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="col-12 col-lg-6">
-            <div class="text-muted small mb-2">Detaily (prvních 20):</div>
-            <pre class="mb-0" style="white-space: pre-wrap;">{% for d in (mqtt_latency.details[:20] if mqtt_latency.details else []) %}seq={{ d.seq }} rtt_ms={{ d.rtt_ms }}
-{% endfor %}</pre>
-          </div>
-        </div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Výsledky MODBUS RTT -->
-  {% if modbus_rtt %}
-  <div class="card shadow-sm mt-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <strong>Výsledek Modbus RTT (přímý RTU test)</strong>
-      {% if modbus_rtt.badge %}
-        <span class="badge bg-{{ modbus_rtt.badge }}">
-          {% if modbus_rtt.semafor == 'ok' %}OK{% elif modbus_rtt.semafor == 'warning' %}VAROVÁNÍ{% elif modbus_rtt.semafor == 'bad' %}ŠPATNÉ{% else %}NEZNÁMÉ{% endif %}
-        </span>
-      {% endif %}
-    </div>
-
-    <div class="card-body">
-
-      {% if modbus_rtt.error %}
-        <div class="alert alert-danger mb-3">
-          <strong>Chyba:</strong> {{ modbus_rtt.error }}
-        </div>
-
-        <div class="alert alert-warning mb-0">
-          <strong>Test nebyl kompletní.</strong><br>
-          Pravděpodobná příčina: běžící <code>RPi Modbus IO Broker</code>, který má otevřený Modbus port.
-        </div>
-
-      {% else %}
-
-        <div class="alert alert-success mb-3">
-          <strong>Sběrnice v pořádku.</strong><br>
-          Odezvy a ztráty odpovídají aktuálnímu počtu slave a nastavení časování.
-        </div>
-
-        <div class="row g-3">
-          <div class="col-12 col-lg-6">
-            <table class="table table-sm align-middle mb-0">
-              <tbody>
-                <tr><th style="width: 220px;">Odesláno / Přijato</th><td>{{ modbus_rtt.sent }} / {{ modbus_rtt.received }}</td></tr>
-                <tr><th>Ztráta</th><td>{{ modbus_rtt.loss }}</td></tr>
-                <tr><th>Min / Avg / P95 / Max (ms)</th>
-                  <td>{{ modbus_rtt.min_ms }} / {{ modbus_rtt.avg_ms }} / {{ modbus_rtt.p95_ms }} / {{ modbus_rtt.max_ms }}</td>
-                </tr>
-                <tr><th>Limity (OK / VAROVÁNÍ ms)</th><td>{{ modbus_rtt.ok_ms }} / {{ modbus_rtt.warn_ms }}</td></tr>
-                <tr><th>Metoda</th><td>{{ modbus_rtt.method }} (addr={{ modbus_rtt.address }}, count={{ modbus_rtt.count }})</td></tr>
-                <tr><th>Slaves</th><td><code>{{ modbus_rtt.slaves }}</code></td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="col-12 col-lg-6">
-            <div class="text-muted small mb-2">Detaily (prvních 20):</div>
-            <pre class="mb-0" style="white-space: pre-wrap;">{% for d in (modbus_rtt.details[:20] if modbus_rtt.details else []) %}seq={{ d.seq }} unit={{ d.unit }} rtt_ms={{ d.rtt_ms }}
-{% endfor %}</pre>
-          </div>
-        </div>
-
-        <div class="alert alert-secondary small mt-3 mb-0">
-          <strong>Jak číst výsledky:</strong>
-          <ul class="mb-0">
-            <li><strong>RTT ~20–40 ms</strong> – typické pro stabilní Modbus RTU s více slave</li>
-            <li><strong>Ztráta &gt; 0</strong> – problém s časováním, rušením nebo konfliktem portu</li>
-            <li><strong>Velký rozptyl</strong> – příliš krátký timeout nebo přetížení sběrnice</li>
-          </ul>
-        </div>
-
-      {% endif %}
     </div>
   </div>
   {% endif %}

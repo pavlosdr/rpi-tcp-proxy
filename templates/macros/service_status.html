@@ -86,12 +86,24 @@
       <span class="btn-text">Restartovat</span>
     </button>
 
-    {# Detail #}
-    <a href="{{ url_for('service_detail', service_id=service.id) }}"
-       class="btn btn-outline-info ms-auto"
-       data-action="detail">
-      Detail služby
-    </a>
+    {# Right-side actions: config + detail together #}
+    {% set cfg = service.config_url if service is defined and service.config_url is defined else None %}
+    <div class="ms-auto d-flex gap-2 flex-wrap">
+      {% if cfg %}
+        <a class="btn btn-outline-secondary"
+           href="{{ cfg }}"
+           data-bs-toggle="tooltip"
+           title="Otevře konfiguraci služby v agendě">
+          Upravit konfiguraci
+        </a>
+      {% endif %}
+
+      <a href="{{ url_for('service_detail', service_id=service.id) }}"
+         class="btn btn-outline-info"
+         data-action="detail">
+        Detail služby
+      </a>
+    </div>
 
   </div>
 </div>

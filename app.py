@@ -210,12 +210,48 @@ def stop_service(service_id):
 @app.route("/services", methods=["GET"])
 @login_required
 def services_page():
+    # pro metadata agend
+    try:
+        from config.agendas import AGENDAS
+    except Exception:
+        AGENDAS = {}
+
+    # mapovani service_id -> agenda_id (napr. "modbus-io-broker" -> "io-modbus-mqtt")
+    service_to_agenda = {}
+    for agenda_id, a in (AGENDAS or {}).items():
+        sid = (a or {}).get("service_id")
+        if sid:
+            service_to_agenda[str(sid).strip()] = agenda_id
+
     services = []
-    for sid, meta in SERVICES_META.items():
+    for sid, meta0 in SERVICES_META.items():
         _, state, _ = is_active(sid)
+
+        # meta může být dict nebo objekt – uděláme to robustně
+        if isinstance(meta0, dict):
+            meta = dict(meta0)  # kopie, ať neměníme globál
+            meta.setdefault("id", sid)          # aby makro service.id fungovalo
+            meta.setdefault("service_id", sid)  # aby šlo mapovat na AGENDAS.service_id
+
+            agenda_id = meta.get("agenda_id") or service_to_agenda.get(str(meta.get("service_id", "")).strip())
+            if agenda_id:
+                meta["config_url"] = url_for("agenda_env", agenda_id=agenda_id)
+
+        else:
+            meta = meta0
+            if not getattr(meta, "id", None):
+                setattr(meta, "id", sid)
+            if not getattr(meta, "service_id", None):
+                setattr(meta, "service_id", sid)
+
+            agenda_id = getattr(meta, "agenda_id", None) or service_to_agenda.get(str(getattr(meta, "service_id", "")).strip())
+            if agenda_id:
+                setattr(meta, "config_url", url_for("agenda_env", agenda_id=agenda_id))
+
         services.append({"meta": meta, "state": state})
 
     return render_template("services.html", services=services, title="Služby")
+
 
 @app.route("/services/<service_id>", methods=["GET"])
 @login_required
@@ -525,13 +561,16 @@ def network():
             )
 
             diag_cards.append({
-                "id": d.get("id", ""),
+                "id": d.get("id", ""),  # DULEZITE: aby slo vybrat v sablone podle id
                 "agenda_id": agenda_id,
                 "agenda_title": agenda.get("title", agenda_id),
                 "title": d.get("title", d.get("id", "diagnostic")),
                 "edit_url": edit_url,
                 "params": params,
                 "thresholds": thresholds,
+                # volitelne, kdybys to nekdy chtel zobrazovat / ladit:
+                # "tab": d.get("tab", ""),
+                # "section": d.get("section", ""),
             })
 
     ping_results = []
