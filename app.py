@@ -210,45 +210,46 @@ def stop_service(service_id):
 @app.route("/services", methods=["GET"])
 @login_required
 def services_page():
-    # pro metadata agend
+    services = []
+    for sid, meta in SERVICES_META.items():
+        _, state, _ = is_active(sid)
+        services.append({"sid": sid, "meta": meta, "state": state})
+
     try:
         from config.agendas import AGENDAS
     except Exception:
         AGENDAS = {}
 
-    # mapovani service_id -> agenda_id (napr. "modbus-io-broker" -> "io-modbus-mqtt")
+    # mapovani: systemd_service_id -> agenda_id
     service_to_agenda = {}
     for agenda_id, a in (AGENDAS or {}).items():
-        sid = (a or {}).get("service_id")
-        if sid:
-            service_to_agenda[str(sid).strip()] = agenda_id
+        svc = (a or {}).get("service_id")
+        if svc:
+            service_to_agenda[str(svc).strip()] = agenda_id
 
-    services = []
-    for sid, meta0 in SERVICES_META.items():
-        _, state, _ = is_active(sid)
+    for s in services:
+        meta = s.get("meta") or {}
 
-        # meta může být dict nebo objekt – uděláme to robustně
-        if isinstance(meta0, dict):
-            meta = dict(meta0)  # kopie, ať neměníme globál
-            meta.setdefault("id", sid)          # aby makro service.id fungovalo
-            meta.setdefault("service_id", sid)  # aby šlo mapovat na AGENDAS.service_id
+        # Toto je to, co pouzivas pro start/stop (u tebe meta["id"])
+        systemd_id = (meta.get("id") or meta.get("service_id") or "").strip()
 
-            agenda_id = meta.get("agenda_id") or service_to_agenda.get(str(meta.get("service_id", "")).strip())
-            if agenda_id:
-                meta["config_url"] = url_for("agenda_env", agenda_id=agenda_id)
+        # fallback: kdyby nekdo mel jen unit
+        if not systemd_id and meta.get("unit"):
+            systemd_id = str(meta.get("unit")).strip()
+            if systemd_id.endswith(".service"):
+                systemd_id = systemd_id[:-8]
 
-        else:
-            meta = meta0
-            if not getattr(meta, "id", None):
-                setattr(meta, "id", sid)
-            if not getattr(meta, "service_id", None):
-                setattr(meta, "service_id", sid)
+        # posledni fallback: klic v SERVICES_META (sid)
+        if not systemd_id:
+            systemd_id = str(s.get("sid", "")).strip()
 
-            agenda_id = getattr(meta, "agenda_id", None) or service_to_agenda.get(str(getattr(meta, "service_id", "")).strip())
-            if agenda_id:
-                setattr(meta, "config_url", url_for("agenda_env", agenda_id=agenda_id))
+        # explicitni agenda_id (do budoucna), jinak podle mapy
+        agenda_id = meta.get("agenda_id")
+        if not agenda_id and systemd_id:
+            agenda_id = service_to_agenda.get(systemd_id)
 
-        services.append({"meta": meta, "state": state})
+        if agenda_id:
+            meta["config_url"] = url_for("agenda_env", agenda_id=agenda_id)
 
     return render_template("services.html", services=services, title="Služby")
 

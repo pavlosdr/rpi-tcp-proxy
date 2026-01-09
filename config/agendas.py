@@ -279,5 +279,138 @@ AGENDAS = {
                 ],
             },
         ],
+    },
+    "infigy_ws_to_mqtt" : {
+        "title": "Infigy WS -> MQTT",
+        "description": "Konfigurace sluzby infigy_ws_to_mqtt (websocket -> MQTT + HA discovery).",
+        "env_path": "/opt/rpi-admin-ui/.env",
+        "service_id": "infigy-mqtt",   # dulezite: shodne se systemd unit bez .service
+        "auto_prefix": "INFIGY_",            # jen pro 'other_auto' (muze byt i prazdne, ale prefix je lepsi)
+
+        "tabs": [
+            {"id": "mqtt",   "label": "MQTT"},
+            {"id": "infigy", "label": "Infigy"},
+            {"id": "auth",   "label": "Auth"},
+            {"id": "ha",     "label": "Home Assistant"},
+            {"id": "timing", "label": "Timing"},
+            {"id": "other",  "label": "Ostatni"},
+        ],
+
+        "sections": [
+            {"id": "mqtt_conn", "tab": "mqtt", "label": "Pripojeni k brokeru",
+            "tooltip": "Parametry pripojeni k MQTT brokeru (host/port/uzivatel/heslo)."},
+            {"id": "mqtt_ident", "tab": "mqtt", "label": "Topic / identita",
+            "tooltip": "Identita klienta a base topic pro publikovani."},
+            {"id": "mqtt_reliability", "tab": "mqtt", "label": "Spolehlivost / watchdog",
+            "tooltip": "Parametry watchdogu a reconnect backoffu."},
+
+            {"id": "infigy_conn", "tab": "infigy", "label": "Pripojeni na Infigy",
+            "tooltip": "Cilovy host a lokalni socket (pokud se pouziva)."},
+            {"id": "auth_main", "tab": "auth", "label": "Autentizace",
+            "tooltip": "Cookie/Bearer pro pristup. Pouzij jen jednu metodu, podle implementace sluzby."},
+
+            {"id": "ha_discovery", "tab": "ha", "label": "MQTT Discovery / identifikace",
+            "tooltip": "Prefix discovery a identifikace zarizeni/entity v HA."},
+            {"id": "meta", "tab": "ha", "label": "Metadata / cesty",
+            "tooltip": "Verze a cesty pro energy state (podle implementace sluzby)."},
+
+            {"id": "timing_main", "tab": "timing", "label": "Casovani a heartbeat",
+            "tooltip": "Intervaly publikovani, tick integratoru a heartbeat age."},
+
+            {
+                "id": "other_auto",
+                "tab": "other",
+                "label": "Ostatni (detekovano)",
+                "description": "Klice z .env, ktere nejsou explicitne v konfiguraci (read-only).",
+            },
+        ],
+
+        "fields": [
+            # -----------------
+            # MQTT / conn
+            # -----------------
+            {"key": "MQTT_HOST", "label": "Host", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "str", "required": True, "placeholder": "192.168.1.20",
+            "tooltip": "Hostname/IP MQTT brokeru (napr. 192.168.1.20 nebo core-mosquitto)."},
+            {"key": "MQTT_PORT", "label": "Port", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "1883",
+            "tooltip": "Port MQTT (obvykle 1883)."},
+            {"key": "MQTT_USER", "label": "Username", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "str", "required": False,
+            "tooltip": "Uzivatel pro MQTT (pokud broker vyzaduje)."},
+            {"key": "MQTT_PASS", "label": "Password", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "secret", "required": False,
+            "tooltip": "Heslo pro MQTT (pokud broker vyzaduje)."},
+
+            # MQTT identita / topic
+            {"key": "MQTT_BASE_INFIGY", "label": "Base topic", "tab": "mqtt", "section": "mqtt_ident",
+            "type": "str", "required": True, "placeholder": "infigy",
+            "tooltip": "Zakladni topic pro publikovani dat (napr. infigy)."},
+            {"key": "CLIENT_ID_INFIGY", "label": "Client ID", "tab": "mqtt", "section": "mqtt_ident",
+            "type": "str", "required": True, "placeholder": "infigy-ws-to-mqtt",
+            "tooltip": "Client ID pro MQTT (musi byt unikAtni v ramci brokeru)."},
+
+            # MQTT reliability
+            {"key": "MQTT_WATCHDOG_INTERVAL_S", "label": "Watchdog interval (s)", "tab": "mqtt", "section": "mqtt_reliability",
+            "type": "int", "required": False, "min": 1, "max": 3600, "placeholder": "30",
+            "tooltip": "Jak casto sluzba kontroluje spojeni / publish (sekundy)."},
+            {"key": "MQTT_RECONNECT_BACKOFF_MAX_S", "label": "Reconnect backoff max (s)", "tab": "mqtt", "section": "mqtt_reliability",
+            "type": "int", "required": False, "min": 1, "max": 3600, "placeholder": "60",
+            "tooltip": "Maximalni cekani pri opakovanych reconnect pokusech (sekundy)."},
+
+            # -----------------
+            # INFIGY
+            # -----------------
+            {"key": "INFIGY_HOST", "label": "Infigy host", "tab": "infigy", "section": "infigy_conn",
+            "type": "str", "required": True, "placeholder": "10.10.100.10",
+            "tooltip": "Hostname/IP Infigy endpointu (dle implementace sluzby)."},
+            {"key": "SOCKET_PATH", "label": "Socket path", "tab": "infigy", "section": "infigy_conn",
+            "type": "str", "required": False, "placeholder": "/run/infigy.sock",
+            "tooltip": "Cesta k UNIX socketu, pokud se pouziva misto TCP."},
+
+            # -----------------
+            # AUTH
+            # -----------------
+            {"key": "AUTH_COOKIE", "label": "Auth cookie", "tab": "auth", "section": "auth_main",
+            "type": "secret", "required": False,
+            "tooltip": "Cookie pro autentizaci (pokud sluzba pouziva cookie auth)."},
+            {"key": "AUTH_BEARER", "label": "Auth bearer", "tab": "auth", "section": "auth_main",
+            "type": "secret", "required": False,
+            "tooltip": "Bearer token pro autentizaci (pokud sluzba pouziva token auth)."},
+
+            # -----------------
+            # HOME ASSISTANT / discovery
+            # -----------------
+            {"key": "DISCOVERY_PREFIX", "label": "Discovery prefix", "tab": "ha", "section": "ha_discovery",
+            "type": "str", "required": True, "placeholder": "homeassistant",
+            "tooltip": "Prefix pro HA MQTT Discovery (typicky homeassistant)."},
+            {"key": "DEVICE_ID", "label": "Device ID", "tab": "ha", "section": "ha_discovery",
+            "type": "str", "required": True, "placeholder": "infigy_gateway",
+            "tooltip": "Identifikator zarizeni pro discovery (device id)."},
+            {"key": "ENTITY_PREFIX", "label": "Entity prefix", "tab": "ha", "section": "ha_discovery",
+            "type": "str", "required": False, "placeholder": "infigy",
+            "tooltip": "Prefix pro entity/senzory v HA (napr. infigy_...)."},
+
+            # Metadata / paths
+            {"key": "SW_VERSION", "label": "SW version", "tab": "ha", "section": "meta",
+            "type": "str", "required": False, "placeholder": "1.0.0",
+            "tooltip": "Verze sluzby (informativni)."},
+            {"key": "ENERGY_STATE_PATH", "label": "Energy state path", "tab": "ha", "section": "meta",
+            "type": "str", "required": False, "placeholder": "/energy/state",
+            "tooltip": "Cesta/endpoint pro zdroj energy state (dle implementace sluzby)."},
+
+            # -----------------
+            # TIMING
+            # -----------------
+            {"key": "ENERGY_PUBLISH_INTERVAL_S", "label": "Publish interval (s)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "5",
+            "tooltip": "Jak casto publikovat energy hodnoty do MQTT (sekundy)."},
+            {"key": "INTEGRATOR_TICK_S", "label": "Integrator tick (s)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "1",
+            "tooltip": "Krok integratoru (sekundy)."},
+            {"key": "HEARTBEAT_MAX_AGE_S", "label": "Heartbeat max age (s)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 1, "max": 86400, "placeholder": "30",
+            "tooltip": "Maximalni stari heartbeat, po kterem se bere spojeni jako neaktualni (sekundy)."},
+        ],
     }
 }
