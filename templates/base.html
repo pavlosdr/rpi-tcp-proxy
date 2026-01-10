@@ -46,13 +46,6 @@
           </li>
 
           <li class="nav-item">
-            <a class="nav-link {% if request.endpoint=='show_env' %}active{% endif %}"
-               href="{{ url_for('show_env') }}">
-              <i class="bi bi-gear me-1"></i>Nastavení (.env)
-            </a>
-          </li>
-
-          <li class="nav-item">
             <a class="nav-link {% if request.endpoint=='services_page' %}active{% endif %}"
                href="{{ url_for('services_page') }}">
               <i class="bi bi-hdd-stack me-1"></i>Služby
@@ -77,20 +70,6 @@
             <a class="nav-link {% if request.endpoint in ['service_page', 'mqtt_discovery'] %}active{% endif %}"
                href="{{ url_for('service_page') }}">
               <i class="bi bi-tools me-1"></i>Servis
-            </a>
-          </li>
-
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint=='io_modbus_mqtt' %}active{% endif %}"
-               href="{{ url_for('io_modbus_mqtt') }}">
-              <i class="bi bi-tools me-1"></i>IO MODBUS–MQTT
-            </a>
-          </li>
-
-          <li class="nav-item">
-            <a class="nav-link"
-              href="{{ url_for('agenda_env', agenda_id='io-modbus-mqtt') }}">
-              <i class="bi bi-sliders me-1"></i>IO MODBUS–MQTT (GEN)
             </a>
           </li>
 

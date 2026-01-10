@@ -9,21 +9,27 @@
 
   <div class="alert alert-info d-flex align-items-start gap-2">
     <div>
-      Zde můžeš spustit rychlé síťové testy: ping na více cílů, iPerf3 throughput test a MQTT latency test.
-      Pro ping zadej cíle oddělené čárkou.
+      Zde můžeš spustit různé testy související se službami nebo síťovým prostředí. 
+      Pokud mají testy vazbu na konfigurační parametry v .env, je možné se přepnout do konfigurace tlačítkem Upravit konfiguraci.
     </div>
   </div>
 
   {# ------------------------------------------------------------
      Vytáhnout konfigurace testů z diag_cards (pokud existují)
      ------------------------------------------------------------ #}
+  {% set ping_cfg = None %}
+  {% set iperf_cfg = None %}
   {% set mqtt_cfg = None %}
   {% set modbus_cfg = None %}
 
   {% if diag_cards %}
+    {% set ping_list  = (diag_cards | selectattr("id", "equalto", "ping") | list) %}
+    {% set iperf_list  = (diag_cards | selectattr("id", "equalto", "iperf") | list) %}
     {% set mqtt_list = (diag_cards | selectattr("id", "equalto", "mqtt_latency") | list) %}
     {% set modbus_list = (diag_cards | selectattr("id", "equalto", "modbus_rtt") | list) %}
 
+    {% if ping_list and ping_list|length > 0 %}{% set ping_cfg = ping_list[0] %}{% endif %}
+    {% if iperf_list and iperf_list|length > 0 %}{% set iperf_cfg = iperf_list[0] %}{% endif %}
     {% if mqtt_list and mqtt_list|length > 0 %}{% set mqtt_cfg = mqtt_list[0] %}{% endif %}
     {% if modbus_list and modbus_list|length > 0 %}{% set modbus_cfg = modbus_list[0] %}{% endif %}
   {% endif %}
@@ -33,55 +39,182 @@
 
     <div class="row g-4">
 
-      <!-- Ping -->
+      <!-- Ping (konfigurace + tlačítko + výsledek v jednom) -->
       <div class="col-12 col-lg-6">
         <div class="card shadow-sm h-100">
           <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-            <strong>Ping testy</strong>
-            <i class="bi bi-question-circle-fill"
-               data-bs-toggle="tooltip"
-               title="Ping na více cílů. Cíle odděluj čárkou."></i>
+            <div class="d-flex align-items-center gap-2">
+              <strong>Ping testy z RPi</strong>
+              <i class="bi bi-question-circle-fill"
+                data-bs-toggle="tooltip"
+                title="Ping na více cílů. Cíle odděluj čárkou."></i>
+            </div>
+
+            <div class="d-flex gap-2">
+              {% if ping_cfg and ping_cfg.edit_url %}
+                <a class="btn btn-sm btn-outline-light"
+                  href="{{ ping_cfg.edit_url }}"
+                  data-bs-toggle="tooltip"
+                  title="Otevře konfiguraci v agendě na správném tabu/sekci">
+                  Upravit konfiguraci
+                </a>
+              {% endif %}
+
+              <button type="button" class="btn btn-sm btn-outline-light" id="btnPing">
+                <span class="btn-label">
+                  <i class="bi bi-broadcast me-1"></i>Spustit
+                </span>
+                <span class="btn-loading d-none">
+                  <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Probíhá…
+                </span>
+              </button>
+            </div>
           </div>
+
           <div class="card-body">
+            <div class="text-muted small mb-2">
+              Ping na více cílů. Cíle odděluj čárkou. Doporučuji max. 10–15 cílů.
+            </div>
+
+            {% if ping_cfg %}
+              <div class="small mb-2">
+                <div class="text-muted">Aktuální konfigurace (read-only náhled):</div>
+
+                {% if ping_cfg.params %}
+                  <div class="d-flex flex-wrap gap-2 mt-1">
+                    {% for p in ping_cfg.params %}
+                      <span class="badge bg-light text-dark border"
+                            data-bs-toggle="tooltip"
+                            title="{{ p.key }}">
+                        {{ p.label }}: <strong>{{ p.value if p.value != '' else '—' }}</strong>{{ p.suffix }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
+
             <div class="mb-3">
               <label for="targets" class="form-label">Cíle (IP / hostname)</label>
               <input type="text"
-                     class="form-control"
-                     name="targets"
-                     id="targets"
-                     value="{{ default_targets }}"
-                     data-bs-toggle="tooltip"
-                     title="Např. 8.8.8.8, 192.168.1.1, homeassistant.local"
-                     required>
-              <div class="form-text">Odděl cíle čárkou. Doporučuji max. 10–15 cílů.</div>
+                    class="form-control"
+                    name="targets"
+                    id="targets"
+                    value="{{ default_targets }}"
+                    data-bs-toggle="tooltip"
+                    title="Např. 8.8.8.8, 192.168.1.1, homeassistant.local"
+                    required>
               <div class="invalid-feedback">Vyplň alespoň jeden cíl.</div>
             </div>
 
-            <button type="button"
-                    class="btn btn-outline-primary"
-                    id="btnPing">
-              <span class="btn-label">
-                <i class="bi bi-broadcast me-1"></i>Spustit ping test
-              </span>
-              <span class="btn-loading d-none">
-                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                Probíhá…
-              </span>
-            </button>
+            {% if ping_results %}
+              <hr class="my-3">
+
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Výsledek</strong>
+                <span class="text-muted small">{{ ping_results|length }} cílů (seřazeno dle latence)</span>
+              </div>
+
+              <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th style="min-width: 220px;">Cíl</th>
+                      <th style="min-width: 140px;">Ztráta paketů</th>
+                      <th style="min-width: 160px;">Průměr (ms)</th>
+                      <th>Chyba</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for r in ping_results %}
+                      <tr>
+                        <td>
+                          {% if r.is_private %}
+                            <code class="text-primary">{{ r.target }}</code>
+                          {% else %}
+                            <code>{{ r.target }}</code>
+                          {% endif %}
+                        </td>
+
+                        <td>
+                          {% if r.loss is not none %}
+                            {% if r.loss|float == 0 %}
+                              <span class="badge bg-success">0 %</span>
+                            {% elif r.loss|float < 10 %}
+                              <span class="badge bg-warning text-dark">{{ r.loss }} %</span>
+                            {% else %}
+                              <span class="badge bg-danger">{{ r.loss }} %</span>
+                            {% endif %}
+                          {% else %}
+                            <span class="text-muted">–</span>
+                          {% endif %}
+                        </td>
+
+                        <td>
+                          {% if r.avg_time_ms is not none %}
+                            {{ "%.2f"|format(r.avg_time_ms) }}
+                          {% else %}
+                            <span class="text-muted">–</span>
+                          {% endif %}
+                        </td>
+
+                        <td class="small">
+                          {% if r.error %}
+                            <span class="text-danger">{{ r.error }}</span>
+                          {% else %}
+                            <span class="text-muted"></span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="mt-3 text-muted small">
+                Tip: pokud vidíš ztráty nebo vysoký průměr, zkus pingnout i gateway a cílové zařízení zvlášť.
+              </div>
+            {% endif %}
           </div>
         </div>
       </div>
 
-      <!-- iPerf -->
+      <!-- iPerf3 (konfigurace + tlačítko + výsledek v jednom) -->
       <div class="col-12 col-lg-6">
         <div class="card shadow-sm h-100">
           <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
-            <strong>iPerf3 test</strong>
-            <i class="bi bi-question-circle-fill"
-               data-bs-toggle="tooltip"
-               title="Pro iPerf musí na cíli běžet iPerf3 server (iperf3 -s)."></i>
+            <div class="d-flex align-items-center gap-2">
+              <strong>iPerf3 test</strong>
+              <i class="bi bi-question-circle-fill"
+                data-bs-toggle="tooltip"
+                title="Pro iPerf musí na cíli běžet iPerf3 server (iperf3 -s)."></i>
+            </div>
+
+            <div class="d-flex gap-2">
+              {% if iperf_cfg and iperf_cfg.edit_url %}
+                <a class="btn btn-sm btn-outline-light"
+                  href="{{ iperf_cfg.edit_url }}"
+                  data-bs-toggle="tooltip"
+                  title="Otevře konfiguraci v agendě na správném tabu/sekci">
+                  Upravit konfiguraci
+                </a>
+              {% endif %}
+
+              <button type="button" class="btn btn-sm btn-outline-light" id="btnIperf">
+                <span class="btn-label">
+                  <i class="bi bi-speedometer2 me-1"></i>Spustit
+                </span>
+                <span class="btn-loading d-none">
+                  <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Probíhá…
+                </span>
+              </button>
+            </div>
           </div>
+
           <div class="card-body">
+
             <!-- VÝRAZNÉ UPOZORNĚNÍ -->
             <div class="alert alert-danger d-flex align-items-start gap-2 mb-3">
               <i class="bi bi-exclamation-triangle-fill fs-5"></i>
@@ -91,52 +224,85 @@
                 Pokud není na HA instalován doplněk, test selže.
               </div>
             </div>
+
+            <div class="text-muted small mb-2">
+              iPerf3 měří propustnost. Na serveru musí běžet <code>iperf3 -s</code>.
+            </div>
+
+            {% if iperf_cfg %}
+              <div class="small mb-2">
+                <div class="text-muted">Aktuální konfigurace (read-only náhled):</div>
+
+                {% if iperf_cfg.params %}
+                  <div class="d-flex flex-wrap gap-2 mt-1">
+                    {% for p in iperf_cfg.params %}
+                      <span class="badge bg-light text-dark border"
+                            data-bs-toggle="tooltip"
+                            title="{{ p.key }}">
+                        {{ p.label }}: <strong>{{ p.value if p.value != '' else '—' }}</strong>{{ p.suffix }}
+                      </span>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
+
             <div class="row g-3">
               <div class="col-md-8">
                 <label for="iperf_ip" class="form-label">IP/hostname serveru</label>
                 <input type="text"
-                       class="form-control"
-                       name="iperf_ip"
-                       id="iperf_ip"
-                       value="{{ iperf_ip or '192.168.1.20' }}"
-                       data-bs-toggle="tooltip"
-                       title="Server, kde běží iperf3 -s"
-                       required>
+                      class="form-control"
+                      name="iperf_ip"
+                      id="iperf_ip"
+                      value="{{ iperf_ip or '192.168.1.20' }}"
+                      data-bs-toggle="tooltip"
+                      title="Server, kde běží iperf3 -s"
+                      required>
                 <div class="invalid-feedback">Vyplň IP/hostname serveru.</div>
               </div>
 
               <div class="col-md-4">
                 <label for="duration" class="form-label">Délka (s)</label>
                 <input type="number"
-                       class="form-control"
-                       name="duration"
-                       id="duration"
-                       value="{{ duration or 10 }}"
-                       min="1" max="60"
-                       data-bs-toggle="tooltip"
-                       title="Délka testu v sekundách (1–60)."
-                       required>
+                      class="form-control"
+                      name="duration"
+                      id="duration"
+                      value="{{ duration or 10 }}"
+                      min="1" max="60"
+                      data-bs-toggle="tooltip"
+                      title="Délka testu v sekundách (1–60)."
+                      required>
                 <div class="invalid-feedback">Zadej 1–60.</div>
               </div>
-            </div>
-
-            <div class="mt-3">
-              <button type="button"
-                      class="btn btn-outline-success"
-                      id="btnIperf">
-                <span class="btn-label">
-                  <i class="bi bi-speedometer2 me-1"></i>Spustit iPerf test
-                </span>
-                <span class="btn-loading d-none">
-                  <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                  Probíhá…
-                </span>
-              </button>
             </div>
 
             <div class="mt-3 text-muted small">
               Tip: na serveru spusť <code>iperf3 -s</code>. Pro testy v LAN doporučuji 10–20 s.
             </div>
+
+            {% if iperf_result %}
+              <hr class="my-3">
+
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Výsledek</strong>
+                {% if iperf_result.server %}
+                  <span class="text-muted small">server: <code>{{ iperf_result.server }}</code></span>
+                {% endif %}
+              </div>
+
+              {% if iperf_result.error %}
+                <div class="alert alert-danger mb-3">
+                  <strong>Chyba:</strong> {{ iperf_result.error }}
+                </div>
+              {% else %}
+                <div class="alert alert-success mb-3">
+                  Test proběhl úspěšně.
+                </div>
+              {% endif %}
+
+              <pre class="mb-0" style="white-space: pre-wrap;">{% if iperf_result.error %}Chyba: {{ iperf_result.error }}{% else %}{{ iperf_result.summary }}{% endif %}</pre>
+            {% endif %}
+
           </div>
         </div>
       </div>
@@ -397,100 +563,6 @@
 
     </div>
   </form>
-
-  <!-- Výsledky ping -->
-  {% if ping_results %}
-  <div class="card shadow-sm mt-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <strong>Výsledky ping testu</strong>
-      <span class="text-muted small">{{ ping_results|length }} cílů (seřazeno dle latence)</span>
-    </div>
-    <div class="card-body">
-      <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0">
-          <thead>
-            <tr>
-              <th style="min-width: 220px;">Cíl</th>
-              <th style="min-width: 140px;">Ztráta paketů</th>
-              <th style="min-width: 160px;">Průměr (ms)</th>
-              <th>Chyba</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in ping_results %}
-              <tr>
-                <td>
-                  {% if r.is_private %}
-                    <code class="text-primary">{{ r.target }}</code>
-                  {% else %}
-                    <code>{{ r.target }}</code>
-                  {% endif %}
-                </td>
-
-                <td>
-                  {% if r.loss is not none %}
-                    {% if r.loss|float == 0 %}
-                      <span class="badge bg-success">0 %</span>
-                    {% elif r.loss|float < 10 %}
-                      <span class="badge bg-warning text-dark">{{ r.loss }} %</span>
-                    {% else %}
-                      <span class="badge bg-danger">{{ r.loss }} %</span>
-                    {% endif %}
-                  {% else %}
-                    <span class="text-muted">–</span>
-                  {% endif %}
-                </td>
-
-                <td>
-                  {% if r.avg_time_ms is not none %}
-                    {{ "%.2f"|format(r.avg_time_ms) }}
-                  {% else %}
-                    <span class="text-muted">–</span>
-                  {% endif %}
-                </td>
-
-                <td class="small">
-                  {% if r.error %}
-                    <span class="text-danger">{{ r.error }}</span>
-                  {% else %}
-                    <span class="text-muted"></span>
-                  {% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="mt-3 text-muted small">
-        Tip: pokud vidíš ztráty nebo vysoký průměr, zkus pingnout i gateway a cílové zařízení zvlášť.
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Výsledky iPerf -->
-  {% if iperf_result %}
-  <div class="card shadow-sm mt-4">
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <strong>Výsledek iPerf testu</strong>
-      <span class="text-muted small">server: <code>{{ iperf_result.server }}</code></span>
-    </div>
-    <div class="card-body">
-      {% if iperf_result.error %}
-        <div class="alert alert-danger mb-3">
-          <strong>Chyba:</strong> {{ iperf_result.error }}
-        </div>
-      {% else %}
-        <div class="alert alert-success mb-3">
-          Test proběhl úspěšně.
-        </div>
-      {% endif %}
-
-      <pre class="mb-0" style="white-space: pre-wrap;">{% if iperf_result.error %}Chyba: {{ iperf_result.error }}{% else %}{{ iperf_result.summary }}{% endif %}</pre>
-    </div>
-  </div>
-  {% endif %}
 
   <!-- VNSTAT: Statistiky rozhraní (bez grafů) -->
   <div class="card shadow-sm mt-4">

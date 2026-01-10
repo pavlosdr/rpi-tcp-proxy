@@ -21,7 +21,7 @@
   <div class="alert alert-info d-flex align-items-start gap-2">
     <div>
       Zde vidíš systemd služby běžící na RPi.
-      Ovládací prvky (<b>Start / Stop / Restart / Detail</b>) jsou sjednocené
+      Ovládací prvky (<b>Start / Stop / Restart / Konfigurace / Detail</b>) jsou sjednocené
       se stránkami jednotlivých agend.
     </div>
   </div>
@@ -30,27 +30,12 @@
   {% if services %}
     {% for s in services %}
       <div class="mb-4">
-
-        <!-- Název + popis agendy -->
-        <!--<div class="mb-2">
-          <h5 class="mb-0">
-            <i class="bi {{ s.meta.icon }} me-2"></i>
-            {{ s.meta.pretty_name }}
-          </h5>
-          {% if s.meta.description %}
-            <div class="text-muted small">
-              {{ s.meta.description }}
-            </div>
-          {% endif %}
-        </div>
-      -->
-        <!-- Stav služby (sjednocené makro) -->
+        <!-- Stav služby -->
         {{ service_status_card(
             service=s.meta,
             service_status=s.state, 
             show_meta=true
         ) }}
-
       </div>
     {% endfor %}
   {% else %}

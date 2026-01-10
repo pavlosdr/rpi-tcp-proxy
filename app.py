@@ -259,26 +259,51 @@ def services_page():
 def service_detail(service_id):
     journal_lines = int(request.args.get("n", 200))
 
-    meta = get_meta(service_id) or {
-        "id": service_id,
-        "pretty_name": service_id,
+    def _resolve_service_key(service_id: str) -> str:
+        # 1) přímý klíč
+        if service_id in SERVICES_META:
+            return service_id
+
+        # 2) shoda podle meta["id"]
+        for k, m in SERVICES_META.items():
+            if (m or {}).get("id") == service_id:
+                return k
+
+        # 3) shoda podle unit (s/bez .service)
+        sid = service_id
+        for k, m in SERVICES_META.items():
+            u = (m or {}).get("unit", "")
+            if not u:
+                continue
+            if u == sid or u == f"{sid}.service" or (u.endswith(".service") and u[:-8] == sid):
+                return k
+
+        # fallback – necháme jak je
+        return service_id
+
+    service_key = _resolve_service_key(service_id)
+
+    meta = get_meta(service_key) or {
+        "id": service_key,
+        "pretty_name": service_key,
         "unit": "",
         "description": "",
         "icon": "",
     }
 
-    ok, state, err = is_active(service_id)
+    ok, state, err = is_active(service_key)
     if not ok and err:
         flash(err, "error")
         return redirect(url_for("services_page"))
 
-    status_out, journal_out, err2, unit = get_service_detail(service_id, journal_lines=journal_lines)
+    status_out, journal_out, err2, unit = get_service_detail(service_key, journal_lines=journal_lines)
     if err2:
         flash(err2, "error")
         return redirect(url_for("services_page"))
 
     meta = dict(meta)
     meta["unit"] = unit  # pro zobrazení v detailu
+    meta["id"] = service_key  # aby další odkazy/JS používaly konzistentní id
 
     return render_template(
         "service_detail.html",
@@ -872,48 +897,6 @@ def api_service_status(service_id):
     if not ok and err:
         return jsonify({"state": "unknown", "error": err}), 400
     return jsonify({"state": state})
-######################### původní route pro testovací stránku #################
-@app.route("/io-modbus-mqtt", methods=["GET", "POST"])
-@login_required
-def io_modbus_mqtt():
-    keys = [
-        # Basic – Modbus
-        "MODBUS_IO_MODBUS_PORT",
-        "MODBUS_IO_MODBUS_BAUDRATE",
-        "MODBUS_IO_MODBUS_TIMEOUT",
-
-        # IO map
-        "MODBUS_IO_SLAVES",
-        "MODBUS_IO_CHANNELS_PER_SLAVE",
-        "MODBUS_IO_DEFAULT_TYPE",
-        "MODBUS_IO_BUTTONS",
-
-        # MQTT
-        "MODBUS_IO_MQTT_HOST",
-        "MODBUS_IO_MQTT_PORT",
-        "MODBUS_IO_MQTT_BASE_TOPIC",
-
-        # Advanced
-        "MODBUS_IO_POLL_INTERVAL_S",
-        "MODBUS_IO_DEBOUNCE_SWITCH_MS",
-        "MODBUS_IO_DEBOUNCE_BUTTON_MS",
-    ]
-    values = {k: os.getenv(k, "") for k in keys}
-    
-    SERVICE_ID = "modbus-io-broker"
-
-    service = SERVICES_META[SERVICE_ID]
-    states = get_services_status()
-    state = states.get(SERVICE_ID, "unknown")
-
-    return render_template(
-        "io_modbus_mqtt.html",
-        values=values,
-        title=service["pretty_name"],
-        service=service,
-        service_status=state,
-    )
-######################### původní route pro testovací stránku #################
 
 @app.route("/agenda/<agenda_id>", methods=["GET", "POST"])
 @login_required
