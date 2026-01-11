@@ -30,12 +30,24 @@
   {% if services %}
     {% for s in services %}
       <div class="mb-4">
+
+        {# ------------------------------------------------------------
+           Normalizace pro nové makro:
+           - makro používá service.service_key
+           - pokud route ještě neposílá service_key, doplníme z s.sid
+           ------------------------------------------------------------ #}
+        {% set meta = s.meta %}
+        {% if meta is mapping and meta.service_key is not defined %}
+          {% set _ = meta.update({'service_key': s.sid}) %}
+        {% endif %}
+
         <!-- Stav služby -->
         {{ service_status_card(
-            service=s.meta,
-            service_status=s.state, 
-            show_meta=true
+          service=s.meta,
+          service_status=s.state,
+          show_meta=True
         ) }}
+
       </div>
     {% endfor %}
   {% else %}

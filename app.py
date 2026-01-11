@@ -16,7 +16,6 @@ from mqtt_tools import (
 from auth import login_required, check_credentials
 from monitor import (
     get_system_info,
-    get_services_status,
     get_multi_ping_stats,
     get_all_vnstat_stats,
     get_iperf_test,
@@ -31,6 +30,8 @@ from services_control import (
     start_service_safe,
     stop_service_safe,
     get_service_detail,
+    resolve_service_key,
+    _normalize_unit_base,
 )
 from envfile import read_env_file
 from agenda_env import build_agenda_context, handle_agenda_post
@@ -211,47 +212,46 @@ def stop_service(service_id):
 @login_required
 def services_page():
     services = []
-    for sid, meta in SERVICES_META.items():
-        _, state, _ = is_active(sid)
-        services.append({"sid": sid, "meta": meta, "state": state})
 
+    # metadata agend
     try:
         from config.agendas import AGENDAS
     except Exception:
         AGENDAS = {}
 
-    # mapovani: systemd_service_id -> agenda_id
+    # mapování: normalized agenda.service_id -> agenda_id
     service_to_agenda = {}
     for agenda_id, a in (AGENDAS or {}).items():
         svc = (a or {}).get("service_id")
         if svc:
-            service_to_agenda[str(svc).strip()] = agenda_id
+            base = _normalize_unit_base(str(svc).strip())
+            service_to_agenda[base] = agenda_id
 
-    for s in services:
-        meta = s.get("meta") or {}
+    for key, meta in (SERVICES_META or {}).items():
+        # key = kanonický identifikátor služby v UI (a pro routy)
+        _, state, _ = is_active(key)
 
-        # Toto je to, co pouzivas pro start/stop (u tebe meta["id"])
-        systemd_id = (meta.get("id") or meta.get("service_id") or "").strip()
+        m = dict(meta or {})
+        m["service_key"] = key   # kanonický identifikátor pro UI/routy
+        m["key"] = key           # pokud někde používáš "key" (můžeš později sjednotit)
+        # m["state"] nedávej – šablona má service_status=s.state a state je v itemu
 
-        # fallback: kdyby nekdo mel jen unit
-        if not systemd_id and meta.get("unit"):
-            systemd_id = str(meta.get("unit")).strip()
-            if systemd_id.endswith(".service"):
-                systemd_id = systemd_id[:-8]
+        unit = str(m.get("unit", "")).strip()
+        unit_base = _normalize_unit_base(unit)
 
-        # posledni fallback: klic v SERVICES_META (sid)
-        if not systemd_id:
-            systemd_id = str(s.get("sid", "")).strip()
-
-        # explicitni agenda_id (do budoucna), jinak podle mapy
-        agenda_id = meta.get("agenda_id")
-        if not agenda_id and systemd_id:
-            agenda_id = service_to_agenda.get(systemd_id)
-
+        # config_url: preferuj explicitní agenda_id v meta, jinak match podle key / unit_base
+        agenda_id = (
+            m.get("agenda_id")
+            or service_to_agenda.get(key)
+            or service_to_agenda.get(unit_base)
+        )
         if agenda_id:
-            meta["config_url"] = url_for("agenda_env", agenda_id=agenda_id)
+            m["config_url"] = url_for("agenda_env", agenda_id=agenda_id)
+
+        services.append({"meta": m, "state": state})
 
     return render_template("services.html", services=services, title="Služby")
+
 
 
 @app.route("/services/<service_id>", methods=["GET"])
@@ -259,56 +259,35 @@ def services_page():
 def service_detail(service_id):
     journal_lines = int(request.args.get("n", 200))
 
-    def _resolve_service_key(service_id: str) -> str:
-        # 1) přímý klíč
-        if service_id in SERVICES_META:
-            return service_id
+    key = resolve_service_key(service_id)
 
-        # 2) shoda podle meta["id"]
-        for k, m in SERVICES_META.items():
-            if (m or {}).get("id") == service_id:
-                return k
-
-        # 3) shoda podle unit (s/bez .service)
-        sid = service_id
-        for k, m in SERVICES_META.items():
-            u = (m or {}).get("unit", "")
-            if not u:
-                continue
-            if u == sid or u == f"{sid}.service" or (u.endswith(".service") and u[:-8] == sid):
-                return k
-
-        # fallback – necháme jak je
-        return service_id
-
-    service_key = _resolve_service_key(service_id)
-
-    meta = get_meta(service_key) or {
-        "id": service_key,
-        "pretty_name": service_key,
+    meta = get_meta(key) or {
+        "pretty_name": key,
         "unit": "",
         "description": "",
         "icon": "",
     }
 
-    ok, state, err = is_active(service_key)
+    ok, state, err = is_active(key)
     if not ok and err:
         flash(err, "error")
         return redirect(url_for("services_page"))
 
-    status_out, journal_out, err2, unit = get_service_detail(service_key, journal_lines=journal_lines)
+    status_out, journal_out, err2, unit = get_service_detail(key, journal_lines=journal_lines)
     if err2:
         flash(err2, "error")
         return redirect(url_for("services_page"))
 
-    meta = dict(meta)
-    meta["unit"] = unit  # pro zobrazení v detailu
-    meta["id"] = service_key  # aby další odkazy/JS používaly konzistentní id
+    m = dict(meta)
+    m["key"] = key
+    m["service_key"] = key
+    m["unit"] = unit
+    m["state"] = state  # kompatibilita pro template
 
     return render_template(
         "service_detail.html",
-        title=f"Detail služby: {meta.get('pretty_name', service_id)}",
-        service=meta,
+        title=f"Detail služby: {m.get('pretty_name', key)}",
+        service=m,
         unit=unit,
         state=state,
         status_out=status_out,
@@ -888,7 +867,6 @@ def logs_download():
         mimetype="text/plain",
     )
 
-#--------------------- NEW ROUTE pro NEW UI ---------------------------
 
 @app.route("/api/service-status/<service_id>", methods=["GET"])
 @login_required
@@ -917,8 +895,6 @@ def agenda_env(agenda_id):
 
     return render_template("agenda_env.html", title=ctx["agenda"]["title"], **ctx)
 
-
-#--------------------- END  NEW ROUTE pro NEW UI ----------------------
 if __name__ == "__main__":
     # pro vývoj; v produkci běží přes systemd
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))

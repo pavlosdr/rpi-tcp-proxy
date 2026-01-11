@@ -19,11 +19,6 @@ def get_wifi_signal():
         return out if out != "" else "N/A"
     return "N/A"
 
-def get_tailscale_status():
-    if shutil.which("tailscale"):
-        return run("tailscale status 2>/dev/null | head -n 10")
-    return "N/A"
-
 def get_system_info():
     return {
         "hostname": run("hostname"),

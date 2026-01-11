@@ -1,5 +1,8 @@
 {% macro service_status_card(service, service_status, show_meta=True) %}
 
+{# kanonický identifikátor – MUSÍ být doplněn routou jako service_key #}
+{% set sid = service.service_key %}
+
 {# normalize state #}
 {% set service_state = (service_status or '')|lower %}
 {% set is_transition = service_state in ['activating', 'deactivating', 'reloading'] %}
@@ -23,7 +26,7 @@
   {% set badge_text = 'UNKNOWN' %}
 {% endif %}
 
-<div class="card shadow-sm mb-3" data-service-id="{{ service.id }}">
+<div class="card shadow-sm mb-3" data-service-id="{{ sid }}">
 
   <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
     {% if show_meta %}
@@ -43,8 +46,8 @@
     {% endif %}
 
     <span class="badge {{ badge_class }}"
-          id="service-badge-{{ service.id }}"
-          data-service-id="{{ service.id }}">
+          id="service-badge-{{ sid }}"
+          data-service-id="{{ sid }}">
       {{ badge_text }}
     </span>
   </div>
@@ -54,8 +57,7 @@
     {# Start (visible when NOT active) #}
     <button type="submit"
             class="btn btn-outline-success {% if service_state == 'active' %}d-none{% endif %}"
-            form="start-form-{{ service.id }}"
-            data-action="start"
+            form="start-form-{{ sid }}"
             {% if not can_control %}disabled{% endif %}
             data-loading
             title="{% if not can_control %}Služba mění stav ({{ service_state }}){% else %}Spustit službu{% endif %}">
@@ -66,10 +68,9 @@
     {# Stop -> modal (visible when active) #}
     <button type="button"
             class="btn btn-outline-danger {% if service_state != 'active' %}d-none{% endif %}"
-            data-action="stop"
             {% if not can_control %}disabled{% endif %}
             data-bs-toggle="modal"
-            data-bs-target="#stopModal-{{ service.id }}"
+            data-bs-target="#stopModal-{{ sid }}"
             title="{% if not can_control %}Služba mění stav ({{ service_state }}){% else %}Zastavit službu{% endif %}">
       Stop
     </button>
@@ -77,8 +78,7 @@
     {# Restart #}
     <button type="submit"
             class="btn btn-outline-primary"
-            form="restart-form-{{ service.id }}"
-            data-action="restart"
+            form="restart-form-{{ sid }}"
             {% if not can_control %}disabled{% endif %}
             data-loading
             title="{% if not can_control %}Služba mění stav ({{ service_state }}){% else %}Restartovat službu{% endif %}">
@@ -86,47 +86,47 @@
       <span class="btn-text">Restartovat</span>
     </button>
 
-    {# Right-side actions: config + detail together #}
-    {% set cfg = service.config_url if service is defined and service.config_url is defined else None %}
-    <div class="ms-auto d-flex gap-2 flex-wrap">
-      {% if cfg %}
+    {# Pravá strana: konfigurace + detail #}
+    <div class="ms-auto d-flex gap-2">
+
+      {% if service.config_url %}
         <a class="btn btn-outline-secondary"
-           href="{{ cfg }}"
+           href="{{ service.config_url }}"
            data-bs-toggle="tooltip"
            title="Otevře konfiguraci služby v agendě">
           Upravit konfiguraci
         </a>
       {% endif %}
 
-      <a href="{{ url_for('service_detail', service_id=service.id) }}"
-         class="btn btn-outline-info"
-         data-action="detail">
+      <a href="{{ url_for('service_detail', service_id=sid) }}"
+         class="btn btn-outline-info">
         Detail služby
       </a>
+
     </div>
 
   </div>
 </div>
 
 {# hidden forms #}
-<form id="start-form-{{ service.id }}"
+<form id="start-form-{{ sid }}"
       method="post"
-      action="{{ url_for('start_service', service_id=service.id) }}"
+      action="{{ url_for('start_service', service_id=sid) }}"
       class="d-none"></form>
 
-<form id="restart-form-{{ service.id }}"
+<form id="restart-form-{{ sid }}"
       method="post"
-      action="{{ url_for('restart', service_id=service.id) }}"
+      action="{{ url_for('restart', service_id=sid) }}"
       class="d-none"></form>
 
-<form id="stop-form-{{ service.id }}"
+<form id="stop-form-{{ sid }}"
       method="post"
-      action="{{ url_for('stop_service', service_id=service.id) }}"
+      action="{{ url_for('stop_service', service_id=sid) }}"
       class="d-none"></form>
 
 {# stop modal #}
 {% if can_control %}
-<div class="modal fade" id="stopModal-{{ service.id }}" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="stopModal-{{ sid }}" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
 
@@ -150,7 +150,7 @@
 
         <button type="submit"
                 class="btn btn-danger"
-                form="stop-form-{{ service.id }}"
+                form="stop-form-{{ sid }}"
                 data-loading>
           <span class="spinner-border spinner-border-sm d-none"></span>
           <span class="btn-text">Ano, zastavit</span>

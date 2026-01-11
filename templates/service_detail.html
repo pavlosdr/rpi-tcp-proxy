@@ -2,10 +2,12 @@
 {% block content %}
 <div class="container py-4">
 
-  {# očekáváme: service (dict), service_status (string), unit (string),
+  {# očekáváme: service (dict s service_key), state (string), unit (string),
                status_out, journal_out, journal_lines #}
 
-  {% set s = (service_status or '')|lower %}
+  {% set sid = service.service_key %}
+  {% set s = (state or '')|lower %}
+
   {% set is_active = (s == 'active') %}
   {% set is_failed = ('failed' in s) %}
   {% set is_inactive = ('inactive' in s or 'dead' in s) %}
@@ -46,13 +48,13 @@
         {% endif %}
 
         <span class="badge {{ badge_class }} ms-2"
-              id="service-badge-{{ service.id }}"
-              data-service-id="{{ service.id }}">
+              id="service-badge-{{ sid }}"
+              data-service-id="{{ sid }}">
           <i class="bi {{ badge_icon }} me-1"></i>{{ badge_text }}
         </span>
 
-        {% if service_status %}
-          <span class="ms-2 small text-muted">({{ service_status }})</span>
+        {% if state %}
+          <span class="ms-2 small text-muted">({{ state }})</span>
         {% endif %}
       </div>
 
@@ -68,18 +70,18 @@
         <i class="bi bi-arrow-left me-1"></i>Zpět
       </a>
 
-      {# Start / Stop / Restart #}
+      {# Stop / Start #}
       {% if is_active %}
         <button type="button"
                 class="btn btn-sm btn-outline-warning"
                 data-bs-toggle="modal"
-                data-bs-target="#stopModal-{{ service.id }}"
+                data-bs-target="#stopModal-{{ sid }}"
                 {% if is_transition %}disabled{% endif %}>
           <i class="bi bi-stop-circle me-1"></i>Stop
         </button>
       {% else %}
         <form method="post"
-              action="{{ url_for('start_service', service_id=service.id) }}"
+              action="{{ url_for('start_service', service_id=sid) }}"
               class="d-inline">
           <button type="submit"
                   class="btn btn-sm btn-outline-success"
@@ -92,7 +94,7 @@
       {% endif %}
 
       <form method="post"
-            action="{{ url_for('restart', service_id=service.id) }}"
+            action="{{ url_for('restart', service_id=sid) }}"
             class="d-inline">
         <button type="submit"
                 class="btn btn-sm btn-outline-primary"
@@ -126,7 +128,7 @@
         <span class="text-muted small">posledních {{ journal_lines }} řádků</span>
 
         <a class="btn btn-sm btn-outline-secondary"
-           href="{{ url_for('service_detail', service_id=service.id, n=journal_lines) }}"
+           href="{{ url_for('service_detail', service_id=sid, n=journal_lines) }}"
            data-bs-toggle="tooltip"
            title="Obnovit">
           <i class="bi bi-arrow-clockwise"></i>
@@ -142,7 +144,7 @@
             {% for n in [50,100,200,500,1000] %}
               <li>
                 <a class="dropdown-item"
-                   href="{{ url_for('service_detail', service_id=service.id, n=n) }}">
+                   href="{{ url_for('service_detail', service_id=sid, n=n) }}">
                   {{ n }}
                 </a>
               </li>
@@ -160,12 +162,12 @@
 
   {# ---------- Stop confirmation modal ---------- #}
   {% if is_active and (not is_transition) %}
-  <form id="stop-form-{{ service.id }}"
+  <form id="stop-form-{{ sid }}"
         method="post"
-        action="{{ url_for('stop_service', service_id=service.id) }}"
+        action="{{ url_for('stop_service', service_id=sid) }}"
         class="d-none"></form>
 
-  <div class="modal fade" id="stopModal-{{ service.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal fade" id="stopModal-{{ sid }}" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
 
@@ -189,7 +191,7 @@
 
           <button type="submit"
                   class="btn btn-danger"
-                  form="stop-form-{{ service.id }}"
+                  form="stop-form-{{ sid }}"
                   data-loading>
             <span class="spinner-border spinner-border-sm d-none"></span>
             <span class="btn-text">Ano, zastavit</span>
