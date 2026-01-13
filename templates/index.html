@@ -1,19 +1,127 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="container py-4">
-  <h2 class="mb-3">Systémové informace</h2>
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h2 class="mb-0">Dashboard</h2>
+    <span class="text-muted small">Systémové informace</span>
+  </div>
 
   <div class="card shadow-sm">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+      <strong>Systémové informace</strong>
+      <i class="bi bi-info-circle-fill"></i>
+    </div>
+
     <div class="card-body">
       <ul class="mb-0">
-        {% for k, v in info.items() %}
+
+        {# hostname #}
+        {% if info.hostname is defined %}
           <li class="mb-2">
-            <b>{{ k }}:</b>
-            <pre class="d-inline mb-0">{{ v }}</pre>
+            <strong>hostname:</strong>
+            <code class="ms-1">{{ info.hostname }}</code>
           </li>
-        {% endfor %}
+        {% endif %}
+
+        {# ip_address -> každý řádek = jedna IP s popisem (iface + síť) #}
+        {% if info.ip_address is defined %}
+          <li class="mb-2">
+            <strong>ip_address:</strong>
+
+            {# ip_address může být list/tuple nebo string #}
+            {% set ip_val = info.ip_address %}
+            {% if ip_val is sequence and (ip_val is not string) %}
+              {% if ip_val|length > 0 %}
+                <div class="mt-1">
+                  {% for line in ip_val %}
+                    {% set line_s = (line|string)|trim %}
+                    {% if line_s %}
+                      <div><code>{{ line_s }}</code></div>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="mt-1 text-muted small">N/A</div>
+              {% endif %}
+            {% else %}
+              {# fallback pro starý formát: "hostname -I" (jen IP oddělené mezerou) #}
+              {% set ips = (ip_val or '')|trim %}
+              {% if ips %}
+                <div class="mt-1">
+                  {% for ip in ips.split() %}
+                    <div><code>{{ ip }}</code></div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="mt-1 text-muted small">N/A</div>
+              {% endif %}
+            {% endif %}
+          </li>
+        {% endif %}
+
+        {# wifi_ssid #}
+        {% if info.wifi_ssid is defined %}
+          <li class="mb-2">
+            <strong>wifi_ssid:</strong>
+            {% set ssid = (info.wifi_ssid or '')|trim %}
+            {% if ssid and ssid != 'N/A' %}
+              <code class="ms-1">{{ ssid }}</code>
+            {% else %}
+              <span class="ms-1 text-muted small">N/A</span>
+            {% endif %}
+          </li>
+        {% endif %}
+
+        {# wifi_strength #}
+        {% if info.wifi_strength is defined %}
+          <li class="mb-2">
+            <strong>wifi_strength:</strong>
+            <code class="ms-1">{{ info.wifi_strength }}</code>
+          </li>
+        {% endif %}
+
+        {# uptime #}
+        {% if info.uptime is defined %}
+          <li class="mb-2">
+            <strong>uptime:</strong>
+            <code class="ms-1">{{ info.uptime }}</code>
+          </li>
+        {% endif %}
+
+        {# loadavg #}
+        {% if info.loadavg is defined %}
+          <li class="mb-2">
+            <strong>loadavg:</strong>
+            <code class="ms-1">{{ info.loadavg }}</code>
+          </li>
+        {% endif %}
+
+        {# cpu_temp #}
+        {% if info.cpu_temp is defined %}
+          <li class="mb-2">
+            <strong>cpu_temp:</strong>
+            <code class="ms-1">{{ info.cpu_temp }}</code>
+          </li>
+        {% endif %}
+
+        {# tailscale_status -> pod názvem, v pre, zachovat zarovnání #}
+        {% if info.tailscale_status is defined %}
+          <li class="mb-0">
+            <strong>tailscale_status:</strong>
+            {% set ts = (info.tailscale_status or '')|trim %}
+            {% if ts and ts != 'N/A' %}
+              <pre class="mt-1 mb-0 p-2 bg-light border rounded"
+                   style="white-space: pre; overflow-x: auto;">{{ ts }}</pre>
+            {% else %}
+              <div class="mt-1 text-muted small">N/A</div>
+            {% endif %}
+          </li>
+        {% endif %}
+
       </ul>
     </div>
   </div>
+
 </div>
 {% endblock %}

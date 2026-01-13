@@ -160,6 +160,79 @@
     </div>
   </div>
 
+  {% if log_enabled %}
+  <!-- Log file -->
+  <div class="card shadow-sm mt-3">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <div>
+        <strong>Log Modbus</strong>
+
+        {# malé souhrny v hlavičce #}
+        <span class="text-muted small ms-2">
+          Out of order: <strong>{{ log_stats.out_of_order }}</strong> |
+          Stray response: <strong>{{ log_stats.stray_response }}</strong> |
+          Duplicate request: <strong>{{ log_stats.duplicate_request }}</strong> |
+          Celkem: <strong>{{ log_stats.total }}</strong>
+        </span>
+
+        {# mini info o souboru #}
+        {% if log_exists %}
+          <div class="text-muted small mt-1">
+            <code>{{ log_path }}</code>
+            <span class="ms-2">{{ (log_size / 1024) | round(1) }} kB</span>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="d-flex gap-2 align-items-center">
+
+        <span class="text-muted small">posledních {{ log_lines }} řádků</span>
+
+        {# refresh (správná URL!) #}
+        <a class="btn btn-sm btn-outline-secondary"
+           href="{{ url_for('service_detail', service_id=service_id, ln=log_lines) }}"
+           data-bs-toggle="tooltip"
+           title="Obnovit">
+          <i class="bi bi-arrow-clockwise"></i>
+        </a>
+
+        {# řádky (správná URL!) #}
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                  type="button"
+                  data-bs-toggle="dropdown">
+            Řádky
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end">
+            {% for ln in [50,100,200,500,1000] %}
+              <li>
+                <a class="dropdown-item"
+                   href="{{ url_for('service_detail', service_id=service_id, ln=ln) }}">
+                  {{ ln }}
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="card-body">
+      {% if log_exists and log_out %}
+        <pre class="mb-0"
+             style="white-space: pre; overflow-x: auto; overflow-y: auto; max-height: 55vh;">{{ log_out }}</pre>
+      {% elif log_exists and not log_out %}
+        <div class="text-muted small">Soubor existuje, ale je prázdný.</div>
+      {% else %}
+        <div class="text-muted small">
+          Log soubor není k dispozici. Zkontroluj <code>LOG_FILE</code> v konfiguraci UI.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   {# ---------- Stop confirmation modal ---------- #}
   {% if is_active and (not is_transition) %}
   <form id="stop-form-{{ sid }}"

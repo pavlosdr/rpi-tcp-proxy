@@ -23,7 +23,7 @@ TARGET_IP   = os.getenv("PROXY_TARGET_IP", "10.10.100.253")
 TARGET_PORT = int(os.getenv("PROXY_TARGET_PORT", "502"))
 
 BUFFER_SIZE = int(os.getenv("BUFFER_SIZE", "4096"))
-SOCK_TIMEOUT_S = int(os.getenv("SOCK_TIMEOUT_S", "30"))   # recv timeout pro detekci „ticha“
+SOCK_TIMEOUT_S = float(os.getenv("SOCK_TIMEOUT_S", "30.0"))   # recv timeout pro detekci „ticha“
 
 LOG_FILE          = os.getenv("LOG_FILE", "/var/log/modbus_proxy.log")
 LOG_LEVEL         = os.getenv("LOG_LEVEL", "INFO").upper()  # DEBUG|INFO|WARNING|ERROR

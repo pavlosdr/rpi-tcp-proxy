@@ -36,41 +36,57 @@
       </button>
 
       <div class="collapse navbar-collapse" id="topNav">
+
         <ul class="navbar-nav me-auto mb-2 mb-lg-0">
 
           <li class="nav-item">
-            <a class="nav-link {% if request.endpoint=='index' %}active{% endif %}"
-               href="{{ url_for('index') }}">
+            <a class="nav-link {% if active_nav=='dashboard' or request.endpoint=='index' %}active{% endif %}"
+              href="{{ url_for('index') }}">
               <i class="bi bi-speedometer2 me-1"></i>Dashboard
             </a>
           </li>
 
           <li class="nav-item">
-            <a class="nav-link {% if request.endpoint=='services_page' %}active{% endif %}"
-               href="{{ url_for('services_page') }}">
+            <a class="nav-link {% if active_nav=='services' or request.endpoint in ['services_page','service_detail'] %}active{% endif %}"
+              href="{{ url_for('services_page') }}">
               <i class="bi bi-hdd-stack me-1"></i>Služby
             </a>
           </li>
 
           <li class="nav-item">
-            <a class="nav-link {% if request.endpoint=='logs' %}active{% endif %}"
-               href="{{ url_for('logs') }}">
-              <i class="bi bi-journal-text me-1"></i>Logy
+            <a class="nav-link {% if active_nav=='network' or request.endpoint=='network' %}active{% endif %}"
+              href="{{ url_for('network') }}">
+              <i class="bi bi-diagram-3 me-1"></i>Síť
             </a>
           </li>
 
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint=='network' %}active{% endif %}"
-               href="{{ url_for('network') }}">
-              <i class="bi bi-diagram-3 me-1"></i>Síťové testy
+          {# Nastavení (dropdown) #}
+          <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle {% if active_nav=='settings' or request.endpoint in ['agenda_env','mqtt_discovery'] %}active{% endif %}"
+              href="#"
+              role="button"
+              data-bs-toggle="dropdown"
+              aria-expanded="false">
+              <i class="bi bi-gear me-1"></i>Nastavení
             </a>
-          </li>
 
-          <li class="nav-item">
-            <a class="nav-link {% if request.endpoint in ['service_page', 'mqtt_discovery'] %}active{% endif %}"
-               href="{{ url_for('service_page') }}">
-              <i class="bi bi-tools me-1"></i>Servis
-            </a>
+            <ul class="dropdown-menu">
+              <li>
+                <a class="dropdown-item {% if request.endpoint=='agenda_env' and active_agenda=='ui' %}active{% endif %}"
+                  href="{{ url_for('agenda_env', agenda_id='ui') }}">
+                  <i class="bi bi-window me-2"></i>RPi Admin UI
+                </a>
+              </li>
+
+              <li><hr class="dropdown-divider"></li>
+
+              <li>
+                <a class="dropdown-item {% if request.endpoint=='mqtt_discovery' %}active{% endif %}"
+                  href="{{ url_for('mqtt_discovery') }}">
+                  <i class="bi bi-broadcast me-2"></i>MQTT Discovery
+                </a>
+              </li>
+            </ul>
           </li>
 
         </ul>

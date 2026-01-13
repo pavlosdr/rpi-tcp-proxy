@@ -2,6 +2,7 @@ import os
 import time
 import json
 import threading
+import logging
 import sys
 import socket
 import shutil
@@ -10,58 +11,79 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 import paho.mqtt.client as mqtt
 
-# --- connection latches ---
-connected = threading.Event()
-last_any_publish_ts = time.monotonic() # heartbeat for published payloads
+# ---------------------- KONFIGURACE ---------------------- #
 
-# --- log runtime ---
-print("__file__ running from:", __file__)
-print("PYTHON:", sys.executable)
-print("PAHO_VERSION:", getattr(mqtt, "__version__", "unknown"))
-print("HAS_V2:", hasattr(mqtt, "CallbackAPIVersion"))
-
-# --- .env ---
+# ------------------------ .env --------------------------- #
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
-# --- Konfig z .env ---
-# --- MQTT ---
-MQTT_HOST   = os.getenv("MQTT_HOST","localhost")
-MQTT_PORT   = int(os.getenv("MQTT_PORT","1883"))
-MQTT_USER   = os.getenv("MQTT_USER","")
-MQTT_PASS   = os.getenv("MQTT_PASS","")
-MQTT_BASE   = os.getenv("MQTT_BASE_RPI","rpi-bridge")
-CLIENT_ID   = os.getenv("CLIENT_ID_RPI","rpi-monitor")
-MQTT_RECONNECT_BACKOFF_MAX_S = int(os.getenv("MQTT_RECONNECT_BACKOFF_MAX_S", "60"))
-DISCOVERY_PREFIX = os.getenv("DISCOVERY_PREFIX", "homeassistant")
-# --- Inverter a další ---
-INVERTER_HOST = os.getenv("INVERTER_HOST","10.10.100.253")
-INVERTER_PORT = int(os.getenv("INVERTER_PORT","502"))
-PING_HA_HOST  = os.getenv("PING_HA_HOST","192.168.1.20")
-PING_INV_HOST = os.getenv("PING_INVERTER_HOST", INVERTER_HOST)
-PROXY_UNIT    = os.getenv("PROXY_SYSTEMD_UNIT","modbus_tcp_proxy.service")
+# ----------------- Helpery pro čtení .env  --------------- #
+def env_str(key: str, default: str = "") -> str:
+    v = os.getenv(key)
+    return v.strip() if v is not None and str(v).strip() != "" else default
 
-POLL_SYS_S    = int(os.getenv("POLL_SYS_S","10"))
-POLL_NET_S    = int(os.getenv("POLL_NET_S","10"))
-POLL_PROXY_S  = int(os.getenv("POLL_PROXY_S","10"))
-HEARTBEAT_S   = int(os.getenv("HEARTBEAT_S","5"))
-MAX_AGE_OK_S  = int(os.getenv("MAX_AGE_OK_S","60"))
+def env_int(key: str, default: int) -> int:
+    v = env_str(key, "")
+    return int(v) if v else default
+# ------------------- Konfig z .env ----------------------- #
+# ------------------------ MQTT --------------------------- #
+MQTT_HOST   = env_str("MQTT_HOST","localhost")
+MQTT_PORT   = env_int("MQTT_PORT",1883)
+MQTT_USER   = env_str("MQTT_USER","")
+MQTT_PASS   = env_str("MQTT_PASS","")
+MQTT_BASE   = env_str("MQTT_BASE_RPI","rpi-bridge")
+CLIENT_ID   = env_str("CLIENT_ID_RPI","rpi-monitor")
+MQTT_RECONNECT_BACKOFF_MAX_S = env_int("MQTT_RECONNECT_BACKOFF_MAX_S", 60)
+DISCOVERY_PREFIX = env_str("DISCOVERY_PREFIX", "homeassistant")
+# ------------------ Inverter a další ---------------------- #
+INVERTER_HOST = env_str("INVERTER_HOST","10.10.100.253")
+INVERTER_PORT = env_int("INVERTER_PORT",502)
+PING_HA_HOST  = env_str("PING_HA_HOST","192.168.1.20")
+PING_INV_HOST = env_str("PING_INVERTER_HOST", INVERTER_HOST)
+PROXY_UNIT    = env_str("PROXY_SYSTEMD_UNIT","modbus_tcp_proxy.service")
 
-DEVICE_ID   = os.getenv("DEVICE_ID","RPi-Monitor")
-DEVICE_NAME = os.getenv("DEVICE_NAME","RPi Monitor")
-DEVICE_MODEL= os.getenv("DEVICE_MODEL","RPi Bridge Utils")
-DEVICE_MF   = os.getenv("DEVICE_MF","RPi")
+POLL_SYS_S    = env_int("POLL_SYS_S",10)
+POLL_NET_S    = env_int("POLL_NET_S",10)
+POLL_PROXY_S  = env_int("POLL_PROXY_S",10)
+HEARTBEAT_S   = env_int("HEARTBEAT_S",5)
+MAX_AGE_OK_S  = env_int("MAX_AGE_OK_S",60)
 
-# --- Singleton lock: zabran spusteni 2. instance ---
+DEVICE_ID   = env_str("DEVICE_ID","RPi-Monitor")
+DEVICE_NAME = env_str("DEVICE_NAME","RPi Monitor")
+DEVICE_MODEL= env_str("DEVICE_MODEL","RPi Bridge Utils")
+DEVICE_MF   = env_str("DEVICE_MF","RPi")
+
+# ---------------------- Logging ---------------------------
+# Log minimization
+LOG_LEVEL = getattr(logging, env_str("MQTT_REPORT_LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="[%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("mqqt_report")
+logger.setLevel(LOG_LEVEL)
+
+# ---------------------- LOG runtime ---------------------- #
+logger.debug("__file__ running from: %s", __file__)
+logger.debug("PYTHON: %s", sys.executable)
+logger.debug("PAHO_VERSION: %s", getattr(mqtt, "__version__", "unknown"))
+logger.debug("HAS_V2: %s", hasattr(mqtt, "CallbackAPIVersion"))
+
+
+# -------------------- connection latches ----------------- #
+connected = threading.Event()
+last_any_publish_ts = time.monotonic() # heartbeat for published payloads
+# ------- Singleton lock: zabran spusteni 2. instance ----- #
 _singleton = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
 try:
     _singleton.bind("\0mqtt_report.singleton")
 except OSError:
-    print("Another mqtt-report instance is running. Exiting.")
+    logger.warning("Another mqtt-report instance is running. Exiting.")
     sys.exit(1)
 
-# --- MQTT klient ---
+# ------------------------ MQTT klient ---------------------- #
 mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id=CLIENT_ID,clean_session=True)
 if MQTT_USER:
     mqttc.username_pw_set(MQTT_USER, MQTT_PASS)
@@ -71,7 +93,7 @@ mqttc.will_set(f"{MQTT_BASE}/bridge/online", "0", qos=1, retain=True)
 # Auto-reconnect backoff
 mqttc.reconnect_delay_set(min_delay=2, max_delay=MQTT_RECONNECT_BACKOFF_MAX_S)
 
-# --- helpers ---
+# ------------------------- helpers ------------------------- #
 def publish(topic_suffix, payload, retain=True, qos=1):
     """Bezpecny publish s odchytem vyjimek + update TS."""
     global last_any_publish_ts
@@ -79,10 +101,11 @@ def publish(topic_suffix, payload, retain=True, qos=1):
     try:
         mqttc.publish(topic, str(payload), qos=qos, retain=retain)
         last_any_publish_ts = time.monotonic()
+        logger.debug("MQTT publish %s=%s (qos=%s retain=%s)", topic, payload, qos, retain)
     except Exception as e:
-        print(f"[MQTT] publish failed {topic}: {e}")
+        logger.exception("MQTT publish failed topic=%s", topic)
 
-# --- MQTT callbacks (v1/v2 kompatibilita) ---
+# -------------- MQTT callbacks (v1/v2 kompatibilita) -------- #
 def _normalize_code(raw):
     code = getattr(raw, "value", raw)
     try: return int(code)
@@ -93,13 +116,13 @@ def on_connect(client, userdata, *args, **kwargs):
     if len(args) > 1:
         raw = args[1]
     code = _normalize_code(raw)
-    print(f"MQTT connected rc={code}")
+    logger.info("MQTT connected rc=%s", code)
     if code == 0:
         publish("bridge/online", "online", retain=True, qos=1)
         try:
             publish_discovery()
         except Exception as e:
-            print(f"publish_discovery failed: {e}")
+            logger.exception("publish_discovery failed")
         connected.set()
 
 def on_disconnect(client, userdata, *args, **kwargs):
@@ -107,13 +130,16 @@ def on_disconnect(client, userdata, *args, **kwargs):
     if len(args) > 0:
         raw = args[0]
     code = _normalize_code(raw)
-    print(f"MQTT disconnected rc={code}")
+    if code == 0:
+        logger.info("MQTT disconnected rc=%s", code)
+    else:
+        logger.warning("MQTT disconnected rc=%s", code)
     # NEPOSILAT "offline" – spolehni se na LWT pri necis. padu
 
 mqttc.on_connect = on_connect
 mqttc.on_disconnect = on_disconnect
 
-# --- Discovery helper ---
+# ---------------------- Discovery helper --------------------- #
 DEVICE_BLOCK = {
     "ids": [DEVICE_ID],
     "name": DEVICE_NAME,
@@ -131,6 +157,7 @@ def _disc_pub(kind, obj, key, cfg):
     mqttc.publish(topic, json.dumps(cfg), qos=1, retain=True)
 
 def publish_discovery():
+    logger.info("HA discovery: publishing started")
     # Sensors
     sensors = [
         ("cpu_temp_c",      "Teplota CPU",            "temperature", "measurement", "°C"),
@@ -178,8 +205,9 @@ def publish_discovery():
             "dev": DEVICE_BLOCK,
         }
         _disc_pub("binary_sensor", "rpi", key, cfg)
+    logger.info("HA discovery: published %s sensors and %s binary sensors", len(sensors), len(bin_sensors))
 
-# --- Helpers: system info / ping / tcp / service ---
+# --------- Helpers: system info / ping / tcp / service ------ #
 def read_cpu_temp():
     try:
         with open("/sys/class/thermal/thermal_zone0/temp","r") as f:
@@ -222,6 +250,7 @@ def ping_once(host, timeout_s=1):
         r = subprocess.run(["/bin/ping","-c","1","-W",str(timeout_s),host],
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         if r.returncode != 0:
+            logger.debug("ping_once failed host=%s", host, exc_info=True)
             return -1
         # najdi time=XX ms
         for line in r.stdout.splitlines():
@@ -242,6 +271,7 @@ def tcp_latency_ms(host, port, timeout_s=1.0):
             dt = (time.perf_counter()-t0)*1000.0
             return True, round(dt,1)
     except:
+        logger.debug("tcp_latency_ms failed host=%s port=%s", host, port, exc_info=True)
         return False, -1.0
 
 def systemd_is_active(unit):
@@ -250,13 +280,15 @@ def systemd_is_active(unit):
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
         return 1 if r.stdout.strip()=="active" else 0
     except:
+        logger.debug("systemd_is_active failed unit=%s", unit, exc_info=True)
         return 0
 
-# --- Workers ---
+# -------------------------- Workers ------------------------- #
 stop_evt = threading.Event()
 last_publish_ts = time.monotonic()
 
 def worker_sys():
+    logger.debug("worker_sys started poll=%ss", POLL_SYS_S)
     while not stop_evt.is_set():
         if connected.is_set():
             v = read_cpu_temp()
@@ -274,6 +306,7 @@ def worker_sys():
         time.sleep(POLL_SYS_S)
 
 def worker_net():
+    logger.debug("worker_net started poll=%ss", POLL_NET_S)
     while not stop_evt.is_set():
         if connected.is_set():
             ms = ping_once(PING_HA_HOST, 1)
@@ -293,28 +326,38 @@ def worker_proxy():
             publish("proxy/systemd_active", st)
             # zmena statu -> publ. timestamp
             if st != last_state:
+                logger.info("Proxy state changed unit=%s -> %s", PROXY_UNIT, "active" if st else "inactive")
                 ts = datetime.now(timezone.utc).isoformat()
                 publish("proxy/last_status_change_ts", ts)
                 last_state = st
         time.sleep(POLL_PROXY_S)
 
 def worker_heartbeat():
+    last_flow_ok = None
     while not stop_evt.is_set():
         if connected.is_set():
             age = int(time.monotonic() - last_publish_ts)
             publish("bridge/last_poll_age_s", age)
             flow_ok = "1" if age < MAX_AGE_OK_S else "0"
             publish("bridge/flow_ok", flow_ok)
+
+            if flow_ok != last_flow_ok:
+                if flow_ok == "0":
+                    logger.warning("Flow not OK: last publish age=%ss (threshold=%ss)", age, MAX_AGE_OK_S)
+                else:
+                    logger.info("Flow OK again: last publish age=%ss", age)
+                last_flow_ok = flow_ok
         time.sleep(HEARTBEAT_S)
 
 def main():
-    print("__file__ running from:", os.path.abspath(__file__))
-    print("MQTT:", f"{MQTT_HOST}:{MQTT_PORT}", "BASE:", MQTT_BASE, "CLIENT_ID:", CLIENT_ID)
+    logger.info("__file__ running from: %s", os.path.abspath(__file__))
+    logger.info("MQTT=%s:%s BASE=%s CLIENT_ID=%s", MQTT_HOST, MQTT_PORT, MQTT_BASE, CLIENT_ID)
 
     mqttc.on_connect = on_connect
     mqttc.on_disconnect = on_disconnect
 
     mqttc.connect(MQTT_HOST, MQTT_PORT, 60)
+    logger.info("Connecting to MQTT broker %s:%s ...", MQTT_HOST, MQTT_PORT)
     mqttc.loop_start()
 
     threads = [
@@ -324,17 +367,20 @@ def main():
         threading.Thread(target=worker_heartbeat, daemon=True),
     ]
     for t in threads: t.start()
-
+    logger.info("Workers started: sys=%ss net=%ss proxy=%ss heartbeat=%ss",
+            POLL_SYS_S, POLL_NET_S, POLL_PROXY_S, HEARTBEAT_S)
+    
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        pass
+        logger.info("Stopping (Ctrl+C)")
     finally:
         stop_evt.set()
         time.sleep(0.5)
         try:
             publish("bridge/online", "offline", retain=True)  # korektni vypnuti
+            logger.info("Stopped")
         except Exception:
             pass
         mqttc.loop_stop()

@@ -16,6 +16,7 @@ AGENDAS = {
             {"id": "iomap",  "label": "IO map"},
             {"id": "diag",   "label": "Diagnostika"},
             {"id": "ha",     "label": "Home Assistant"},
+            {"id": "logging", "label": "Logging"},
             {"id": "other",  "label": "Ostatni"},
         ],
 
@@ -87,6 +88,9 @@ AGENDAS = {
                 "description": "Klice MODBUS_IO_* nalezene v .env, ktere nejsou explicitne v konfiguraci (read-only).",
                 "tooltip": "Automaticky detekovane klice MODBUS_IO_* z .env, ktere nemaji metadata. Zobrazuji se pouze pro prehled (read-only), aby se nic omylem neupravilo.",
             },
+            {"id": "log_main",    "tab": "logging", "label": "Logování",
+            "tooltip": "Nastavení logu - úroveň"},
+
         ],
 
         "fields": [
@@ -127,6 +131,13 @@ AGENDAS = {
             {"key": "MODBUS_IO_MQTT_BASE_TOPIC", "label": "Base topic", "tab": "mqtt", "section": "mqtt_topic",
              "type": "str", "required": False, "placeholder": "modbus_io",
              "tooltip": "Base topic (napr. modbus_io). Broker publikuje do: base/state/* a base/event/*."},
+
+            # -----------------
+            # LOGGING
+            # -----------------
+            {"key": "MODBUS_IO_LOG_LEVEL", "label": "Log level", "tab": "logging", "section": "log_main",
+            "type": "select", "choices": ["DEBUG", "INFO", "WARNING", "ERROR"], "required": True,
+            "tooltip": "Uroven logu. INFO pro bezny provoz, DEBUG pri ladeni."},
 
             # -----------------
             # MODBUS RTU
@@ -293,6 +304,7 @@ AGENDAS = {
             {"id": "auth",   "label": "Auth"},
             {"id": "ha",     "label": "Home Assistant"},
             {"id": "timing", "label": "Timing"},
+            {"id": "logging", "label": "Logging"},
             {"id": "other",  "label": "Ostatni"},
         ],
 
@@ -303,26 +315,20 @@ AGENDAS = {
             "tooltip": "Identita klienta a base topic pro publikovani."},
             {"id": "mqtt_reliability", "tab": "mqtt", "label": "Spolehlivost / watchdog",
             "tooltip": "Parametry watchdogu a reconnect backoffu."},
-
             {"id": "infigy_conn", "tab": "infigy", "label": "Pripojeni na Infigy",
             "tooltip": "Cilovy host a lokalni socket (pokud se pouziva)."},
             {"id": "auth_main", "tab": "auth", "label": "Autentizace",
             "tooltip": "Cookie/Bearer pro pristup. Pouzij jen jednu metodu, podle implementace sluzby."},
-
             {"id": "ha_discovery", "tab": "ha", "label": "MQTT Discovery / identifikace",
             "tooltip": "Prefix discovery a identifikace zarizeni/entity v HA."},
             {"id": "meta", "tab": "ha", "label": "Metadata / cesty",
             "tooltip": "Verze a cesty pro energy state (podle implementace sluzby)."},
-
             {"id": "timing_main", "tab": "timing", "label": "Casovani a heartbeat",
             "tooltip": "Intervaly publikovani, tick integratoru a heartbeat age."},
-
-            {
-                "id": "other_auto",
-                "tab": "other",
-                "label": "Ostatni (detekovano)",
-                "description": "Klice z .env, ktere nejsou explicitne v konfiguraci (read-only).",
-            },
+            {"id": "log_main",    "tab": "logging", "label": "Logování",
+            "tooltip": "Nastavení logu - úroveň"},
+            {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)",
+            "description": "Klice z .env, ktere nejsou explicitne v konfiguraci (read-only)."},
         ],
 
         "fields": [
@@ -392,9 +398,6 @@ AGENDAS = {
             "tooltip": "Prefix pro entity/senzory v HA (napr. infigy_...)."},
 
             # Metadata / paths
-            {"key": "SW_VERSION", "label": "SW version", "tab": "ha", "section": "meta",
-            "type": "str", "required": False, "placeholder": "1.0.0",
-            "tooltip": "Verze sluzby (informativni)."},
             {"key": "ENERGY_STATE_PATH", "label": "Energy state path", "tab": "ha", "section": "meta",
             "type": "str", "required": False, "placeholder": "/energy/state",
             "tooltip": "Cesta/endpoint pro zdroj energy state (dle implementace sluzby)."},
@@ -411,6 +414,12 @@ AGENDAS = {
             {"key": "HEARTBEAT_MAX_AGE_S", "label": "Heartbeat max age (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 86400, "placeholder": "30",
             "tooltip": "Maximalni stari heartbeat, po kterem se bere spojeni jako neaktualni (sekundy)."},
+            # -----------------
+            # LOGGING
+            # -----------------
+            {"key": "INFIGY_LOG_LEVEL", "label": "Log level", "tab": "logging", "section": "log_main",
+            "type": "select", "choices": ["DEBUG", "INFO", "WARNING", "ERROR"], "required": True,
+            "tooltip": "Uroven logu. INFO pro bezny provoz, DEBUG pri ladeni."},    
         ],
     },
     "modbus_tcp_proxy": {
@@ -440,7 +449,7 @@ AGENDAS = {
             {"id": "socket_main", "tab": "socket",  "label": "Socket / buffery",
             "tooltip": "Timeouty a velikosti bufferu. Ovlivnuje stabilitu a latenci."},
 
-            {"id": "log_main",    "tab": "logging", "label": "Logovani",
+            {"id": "log_main",    "tab": "logging", "label": "Logovani komunikace Modbus",
             "tooltip": "Kam a jak se zapisuje log (soubor, uroven, rotace)."},
             {"id": "log_debug",   "tab": "logging", "label": "Debug / statistiky",
             "tooltip": "Volitelne debug vypisy (hexdump, sample) a periodicke statistiky."},
@@ -543,7 +552,7 @@ AGENDAS = {
 
     "mqtt-report": {
         "title": "RPi MQTT Report",
-        "description": "Konfigurace sluzby rpi-mqtt-report (periodicky reporting/diagnostika do MQTT + HA discovery).",
+        "description": "Konfigurace služby rpi-mqtt-report (periodicky reporting/diagnostika do MQTT + HA discovery).",
         "env_path": "/opt/rpi-admin-ui/.env",
         "service_id": "mqtt-report",     # musi sedet s SERVICES_META key/id (kvuli tlacitkum a stavu)
         "auto_prefix": "MQTT_REPORT_",   # jen formalne; klice jsou bez prefixu (zatim)
@@ -552,24 +561,28 @@ AGENDAS = {
             {"id": "mqtt",     "label": "MQTT"},
             {"id": "targets",  "label": "Targets"},
             {"id": "timing",   "label": "Intervals"},
+            {"id": "logging", "label": "Logging"},
             {"id": "device",   "label": "Device"},
         ],
 
         "sections": [
-            {"id": "mqtt_conn",  "tab": "mqtt",    "label": "Pripojeni k brokeru",
-            "tooltip": "Nastaveni pristupu na MQTT broker a klientskou identitu."},
+            {"id": "mqtt_conn",  "tab": "mqtt",    "label": "Připojení k MQTT brokeru",
+            "tooltip": "Nastavení přístupu na MQTT broker a klientskou identitu."},
 
             {"id": "mqtt_topic", "tab": "mqtt",    "label": "Topic / identita",
-            "tooltip": "Base topic a Client ID, pod kterym se sluzba pripojuje a publikuje."},
+            "tooltip": "Base topic a Client ID, pod kterým se služba připojuje a publikuje."},
 
-            {"id": "targets_main","tab": "targets","label": "Cilove systemy",
+            {"id": "targets_main","tab": "targets","label": "Cílové systémy",
             "tooltip": "Hosty a porty pro diagnostiku (inverter, HA ping, proxy unit)."},
             
-            {"id": "timing_main","tab": "timing",  "label": "Casovani a watchdog",
-            "tooltip": "Polling intervaly a heartbeat. Ovlivnuje zatez i citlivost hlidani."},
+            {"id": "timing_main","tab": "timing",  "label": "Časování a watchdog",
+            "tooltip": "Polling intervaly a heartbeat. Ovlivnuje zátěž i citlivost hlídaní."},
 
-            {"id": "device_main","tab": "device",  "label": "Identita zarizeni",
+            {"id": "device_main","tab": "device",  "label": "Identita MQTT zařízení",
             "tooltip": "Jak se RPi prezentuje v HA/MQTT (device info)."},
+
+            {"id": "log_main", "tab": "logging", "label": "Logování",
+            "tooltip": "Nastavení logu - úroveň"},
         ],
 
         "fields": [
@@ -658,6 +671,14 @@ AGENDAS = {
             {"key": "DEVICE_MF", "label": "Manufacturer", "tab": "device", "section": "device_main",
             "type": "str", "required": True, "placeholder": "RPi",
             "tooltip": "Vyrobce zarizeni."},
+
+            # -----------------
+            # LOGGING
+            # -----------------
+            {"key": "MQTT_REPORT_LOG_LEVEL", "label": "Log level", "tab": "logging", "section": "log_main",
+            "type": "select", "choices": ["DEBUG", "INFO", "WARNING", "ERROR"], "required": True,
+            "tooltip": "Uroven logu. INFO pro bezny provoz, DEBUG pri ladeni."},
+
         ],
     },
 

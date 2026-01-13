@@ -1,5 +1,5 @@
-# app.py — finální s metrikami logu
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, abort, jsonify
+# app.py
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, abort, jsonify, current_app
 from dotenv import load_dotenv
 import os
 import io
@@ -8,7 +8,7 @@ import logging
 import sys
 import datetime as dt
 from collections import defaultdict, deque
-from typing import Optional
+from typing import Optional, Dict
 from mqtt_tools import (
     mqtt_list_retained_discovery, 
     mqtt_delete_retained, 
@@ -21,6 +21,8 @@ from monitor import (
     get_iperf_test,
     get_mqtt_latency_test,
     get_modbus_rtt_test,
+    tail_file,
+    parse_mqtt_report_log_stats,
 )
 from services_control import (
     SERVICES_META,
@@ -37,12 +39,14 @@ from envfile import read_env_file
 from agenda_env import build_agenda_context, handle_agenda_post
 from config.agendas import AGENDAS
 
-# načti .env ze stejného adresáře
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ---------------------- KONFIGURACE ---------------------- #
+
+# ------------------------ .env --------------------------- #
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # načti .env ze stejného adresáře
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
-app = Flask(__name__)
+
 # --- force logs to journald (stdout) ---
 root = logging.getLogger()
 root.handlers.clear()
@@ -51,20 +55,19 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
 root.addHandler(handler)
 root.setLevel(logging.INFO)
+LOG_FILE = os.getenv("LOG_FILE", "/var/log/modbus_proxy.log")
 
-# Flask app logger
+app = Flask(__name__)
+# --------------------Flask app logger -------------------- #
 app.logger.handlers.clear()
 app.logger.propagate = True
 app.logger.setLevel(logging.INFO)
 
-# Werkzeug (HTTP access + errors)
+app.secret_key = os.getenv("UI_SECRET", "change-me")
+# -------------Werkzeug (HTTP access + errors) ------------ #
 logging.getLogger("werkzeug").setLevel(logging.INFO)
 
-app.secret_key = os.getenv("UI_SECRET", "change-me")
-
-# ---------- Pomocné ----------
-LOG_FILE = os.getenv("LOG_FILE", "/var/log/modbus_proxy.log")
-
+# ------------------------- helpers ------------------------- #
 def _read_tail(path: str, max_bytes: int = 200_000) -> str:
     """Rychlé přečtení konce souboru (max_bytes)."""
     if not os.path.exists(path):
@@ -173,7 +176,7 @@ def parse_log_metrics(
 
     return out
 
-# ---------- ROUTES ----------
+# ------------------------ ROUTES ------------------------- #
 
 @app.route("/", methods=["GET"])
 @login_required
@@ -213,51 +216,46 @@ def stop_service(service_id):
 def services_page():
     services = []
 
-    # metadata agend
+    # --- načti agendy (pokud existují) ---
     try:
         from config.agendas import AGENDAS
     except Exception:
         AGENDAS = {}
 
-    # mapování: normalized agenda.service_id -> agenda_id
-    service_to_agenda = {}
+    # mapování: service_id (bez .service) -> agenda_id
+    service_to_agenda: Dict[str, str] = {}
     for agenda_id, a in (AGENDAS or {}).items():
         svc = (a or {}).get("service_id")
-        if svc:
-            base = _normalize_unit_base(str(svc).strip())
+        if not svc:
+            continue
+        base = _normalize_unit_base(str(svc).strip())
+        if base:
             service_to_agenda[base] = agenda_id
 
+    # --- vytvoř seznam služeb pro template ---
     for key, meta in (SERVICES_META or {}).items():
-        # key = kanonický identifikátor služby v UI (a pro routy)
+        # state získáváme přes kanonický key (whitelist -> unit)
         _, state, _ = is_active(key)
 
         m = dict(meta or {})
-        m["service_key"] = key   # kanonický identifikátor pro UI/routy
-        m["key"] = key           # pokud někde používáš "key" (můžeš později sjednotit)
-        # m["state"] nedávej – šablona má service_status=s.state a state je v itemu
+        m["service_key"] = key   # kanonický identifikátor pro routy/UI
+        m["key"] = key           # volitelné (kdybys někde používal)
 
-        unit = str(m.get("unit", "")).strip()
-        unit_base = _normalize_unit_base(unit)
-
-        # config_url: preferuj explicitní agenda_id v meta, jinak match podle key / unit_base
-        agenda_id = (
-            m.get("agenda_id")
-            or service_to_agenda.get(key)
-            or service_to_agenda.get(unit_base)
-        )
+        # config_url: pouze podle AGENDAS (podle service_id nebo unit base)
+        unit_base = _normalize_unit_base(str(m.get("unit", "")).strip())
+        agenda_id = service_to_agenda.get(key) or (service_to_agenda.get(unit_base) if unit_base else None)
         if agenda_id:
             m["config_url"] = url_for("agenda_env", agenda_id=agenda_id)
 
-        services.append({"meta": m, "state": state})
+        services.append({"sid": key, "meta": m, "state": state})
 
     return render_template("services.html", services=services, title="Služby")
-
-
 
 @app.route("/services/<service_id>", methods=["GET"])
 @login_required
 def service_detail(service_id):
     journal_lines = int(request.args.get("n", 200))
+    log_lines = int(request.args.get("ln", 200))
 
     key = resolve_service_key(service_id)
 
@@ -278,128 +276,44 @@ def service_detail(service_id):
         flash(err2, "error")
         return redirect(url_for("services_page"))
 
+    # service pro templaty: kanonický id = service_id
     m = dict(meta)
     m["key"] = key
     m["service_key"] = key
     m["unit"] = unit
-    m["state"] = state  # kompatibilita pro template
+    m["state"] = state
 
+    # -------------------
+    # LOG pouze pro modbus-proxy
+    # -------------------
+    log_enabled = (key == "modbus-proxy")
+
+    log_path = (LOG_FILE or "").strip() if log_enabled else ""
+    log_exists = bool(log_path and os.path.exists(log_path))
+    log_size = os.path.getsize(log_path) if log_exists else 0
+    log_out = tail_file(log_path, log_lines) if log_exists else ""
+    log_stats = parse_mqtt_report_log_stats(log_out) if log_enabled else {"out_of_order": 0, "stray_response": 0, "duplicate_request": 0, "total": 0}
+    
     return render_template(
         "service_detail.html",
         title=f"Detail služby: {m.get('pretty_name', key)}",
         service=m,
+        service_id=service_id,          # <<< důležité pro správné URL v template
         unit=unit,
         state=state,
         status_out=status_out,
         journal_out=journal_out,
         journal_lines=journal_lines,
+        active_nav="services",
+        # log karta
+        log_enabled=log_enabled,
+        log_path=log_path,
+        log_out=log_out,
+        log_exists=log_exists,
+        log_size=log_size,
+        log_stats=log_stats,
+        log_lines=log_lines,
     )
-
-@app.route("/env", methods=["GET", "POST"])
-@login_required
-def show_env():
-    # seznam povolených klíčů (.env se přepisuje jen pro tyto)
-    allowed = [
-        # Proxy
-        "LISTEN_IP", "LISTEN_PORT", "PROXY_TARGET_IP", "PROXY_TARGET_PORT",
-        "BUFFER_SIZE", "SOCK_TIMEOUT_S",
-        # Modbus/TID/UID režimy
-        "TID_REWRITE", "TID_STRICT", "STRICT_UID", "PASS_STRAY",
-        # Logging
-        "LOG_FILE", "LOG_LEVEL", "LOG_HEXDUMP", "LOG_SAMPLE_BYTES",
-        "LOG_STATS_INTERVAL", "LOG_MAX_BYTES", "LOG_BACKUP_COUNT", "DROP_STRAY_SILENT",
-        # MQTT
-        "MQTT_ENABLED", "MQTT_HOST", "MQTT_PORT", "MQTT_TOPIC_PREFIX", "MQTT_REPORT_INTERVAL",
-        # UI
-        "UI_USER", "UI_PASS", "UI_SECRET", "PORT",
-        # RPi Modbus IO Broker
-        "MODBUS_IO_ENABLED", "MODBUS_IO_MQTT_HOST", "MODBUS_IO_MQTT_PORT", 
-        "MODBUS_IO_MQTT_USERNAME", "MODBUS_IO_MQTT_PASSWORD",
-        "MODBUS_IO_MQTT_CLIENT_ID", "MODBUS_IO_MQTT_BASE_TOPIC",
-        "MODBUS_IO_MODBUS_PORT", "MODBUS_IO_MODBUS_BAUDRATE", "MODBUS_IO_MODBUS_TIMEOUT",
-        "MODBUS_IO_POLL_INTERVAL_S", "MODBUS_IO_DEBOUNCE_SWITCH_MS", 
-        "MODBUS_IO_DEBOUNCE_BUTTON_MS", "MODBUS_IO_SLAVES", "MODBUS_IO_CHANNELS_PER_SLAVE", 
-        "MODBUS_IO_NAME_PREFIX", "MODBUS_IO_DEFAULT_TYPE", "MODBUS_IO_BUTTONS",
-        # RPi Modbus IO Broker: MQTT latency test (UI diagnostika) ---
-        "MODBUS_IO_MQTT_LATENCY_COUNT", "MODBUS_IO_MQTT_LATENCY_INTERVAL_MS",
-        "MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "MODBUS_IO_MQTT_LATENCY_TOPIC_PREFIX",
-        "MODBUS_IO_MQTT_LATENCY_OK_MS", "MODBUS_IO_MQTT_LATENCY_WARN_MS",
-    ]
-
-    if request.method == "POST":
-        try:
-            with open(ENV_PATH, "r") as f:
-                lines = f.readlines()
-        except FileNotFoundError:
-            lines = []
-
-        new_lines = []
-        present = set()
-
-        def _clean(v: str) -> str:
-            return (v or "").strip()
-
-        for line in lines:
-            if "=" not in line or line.lstrip().startswith("#"):
-                new_lines.append(line)
-                continue
-
-            key, old_val = line.split("=", 1)
-            key = key.strip()
-
-            if key in allowed:
-                form_val = _clean(request.form.get(key, None))
-
-                # 1) pokud uživatel pole nechal prázdné -> NEPŘEPISUJ, nech původní řádek
-                # (tzn. žádné KEY=)
-                if form_val == "":
-                    new_lines.append(line)
-                else:
-                    new_lines.append(f"{key}={form_val}\n")
-
-                present.add(key)
-            else:
-                new_lines.append(line)
-
-        # 2) chybějící klíče přidávej jen tehdy, když mají neprázdnou hodnotu
-        for key in allowed:
-            if key not in present:
-                form_val = _clean(request.form.get(key, None))
-                env_val = _clean(os.getenv(key, ""))
-
-                val = form_val if form_val != "" else env_val
-                if val != "":
-                    new_lines.append(f"{key}={val}\n")
-
-        with open(ENV_PATH, "w") as f:
-            f.writelines(new_lines)
-
-        load_dotenv(dotenv_path=ENV_PATH, override=True)
-        flash(".env uloženo", "success")
-        return redirect(url_for("show_env"))
-
-    # GET – vyplň hodnoty
-    keys = [
-        "LISTEN_IP", "LISTEN_PORT", "PROXY_TARGET_IP", "PROXY_TARGET_PORT",
-        "BUFFER_SIZE", "SOCK_TIMEOUT_S",
-        "TID_REWRITE", "TID_STRICT", "STRICT_UID", "PASS_STRAY",
-        "LOG_FILE", "LOG_LEVEL", "LOG_HEXDUMP", "LOG_SAMPLE_BYTES",
-        "LOG_STATS_INTERVAL", "LOG_MAX_BYTES", "LOG_BACKUP_COUNT", "DROP_STRAY_SILENT",
-        "MQTT_ENABLED", "MQTT_HOST", "MQTT_PORT", "MQTT_TOPIC_PREFIX", "MQTT_REPORT_INTERVAL",
-        "UI_USER", "UI_PASS", "UI_SECRET", "PORT",
-        "MODBUS_IO_ENABLED", "MODBUS_IO_MQTT_HOST", "MODBUS_IO_MQTT_PORT", 
-        "MODBUS_IO_MQTT_USERNAME", "MODBUS_IO_MQTT_PASSWORD",
-        "MODBUS_IO_MQTT_CLIENT_ID", "MODBUS_IO_MQTT_BASE_TOPIC",
-        "MODBUS_IO_MODBUS_PORT", "MODBUS_IO_MODBUS_BAUDRATE", "MODBUS_IO_MODBUS_TIMEOUT",
-        "MODBUS_IO_POLL_INTERVAL_S", "MODBUS_IO_DEBOUNCE_SWITCH_MS", 
-        "MODBUS_IO_DEBOUNCE_BUTTON_MS", "MODBUS_IO_SLAVES", "MODBUS_IO_CHANNELS_PER_SLAVE", 
-        "MODBUS_IO_NAME_PREFIX", "MODBUS_IO_DEFAULT_TYPE", "MODBUS_IO_BUTTONS",
-        "MODBUS_IO_MQTT_LATENCY_COUNT", "MODBUS_IO_MQTT_LATENCY_INTERVAL_MS",
-        "MODBUS_IO_MQTT_LATENCY_TIMEOUT_S", "MODBUS_IO_MQTT_LATENCY_TOPIC_PREFIX",
-        "MODBUS_IO_MQTT_LATENCY_OK_MS", "MODBUS_IO_MQTT_LATENCY_WARN_MS",
-    ]
-    values = {k: os.getenv(k, "") for k in keys}
-    return render_template("env.html", values=values, title="Nastavení (.env)")
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -408,7 +322,7 @@ def login():
             session["authenticated"] = True
             return redirect(url_for("index"))
         flash("Neplatné přihlašovací údaje", "error")
-    return render_template("login.html", title="Přihlášení")
+    return render_template("login.html", title="Přihlášení", active_nav="dashboard")
 
 @app.route("/logout")
 def logout():
@@ -738,12 +652,13 @@ def network():
         iperf_ip=request.form.get("iperf_ip", "192.168.1.20") if request.method == "POST" else "192.168.1.20",
         duration=request.form.get("duration", 10) if request.method == "POST" else 10,
         title="Síťové testy",
+        active_nav="network",
     )
 
 @app.route("/service", methods=["GET"])
 @login_required
 def service_page():
-    return render_template("service.html", title="Servis")
+    return render_template("service.html", title="Servis", active_nav="services")
 
 @app.route("/mqtt-discovery", methods=["GET", "POST"])
 @login_required
@@ -800,9 +715,8 @@ def mqtt_discovery():
         mqtt_host=host,
         mqtt_port=port,
         title="MQTT Discovery – servis",
+        active_nav="settings"
     )
-
-# ---------- LOGS + METRIKY ----------
 
 @app.route("/logs", methods=["GET"])
 @login_required
@@ -856,17 +770,27 @@ def logs():
 @app.route("/logs/download", methods=["GET"])
 @login_required
 def logs_download():
-    if not os.path.exists(LOG_FILE):
+    path = (LOG_FILE or "").strip()
+    if not path:
         abort(404)
-    with open(LOG_FILE, "rb") as f:
-        data = f.read()
-    return send_file(
-        io.BytesIO(data),
-        as_attachment=True,
-        download_name=os.path.basename(LOG_FILE),
-        mimetype="text/plain",
-    )
 
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        abort(404)
+
+    try:
+        return send_file(
+            path,
+            as_attachment=True,
+            attachment_filename=os.path.basename(path),
+            mimetype="text/plain",
+            conditional=True,
+        )
+    except PermissionError:
+        abort(403)
+    except Exception as e:
+        current_app.logger.exception("logs_download failed: %s", e)
+        abort(500)
 
 @app.route("/api/service-status/<service_id>", methods=["GET"])
 @login_required
@@ -884,16 +808,28 @@ def agenda_env(agenda_id):
         if ok:
             flash(msg, "success")
             return redirect(url_for("agenda_env", agenda_id=agenda_id))
-        # chyby -> render zpět
         flash(msg, "error")
-        return render_template("agenda_env.html", title=ctx["agenda"]["title"], **ctx)
+        return render_template(
+            "agenda_env.html",
+            title=ctx["agenda"]["title"],
+            active_nav="settings",     # <---
+            active_agenda=agenda_id,   # <--- volitelné (hodí se pro submenu)
+            **ctx
+        )
 
     ok, ctx, msg = build_agenda_context(agenda_id)
     if not ok:
         flash(msg, "error")
         return redirect(url_for("index"))
 
-    return render_template("agenda_env.html", title=ctx["agenda"]["title"], **ctx)
+    return render_template(
+        "agenda_env.html",
+        title=ctx["agenda"]["title"],
+        active_nav="settings",       # <---
+        active_agenda=agenda_id,     # <--- volitelné (hodí se pro submenu)
+        **ctx
+    )
+
 
 if __name__ == "__main__":
     # pro vývoj; v produkci běží přes systemd

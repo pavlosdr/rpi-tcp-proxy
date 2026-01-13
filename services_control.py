@@ -281,7 +281,7 @@ def get_service_detail(service_id: str, journal_lines: int = 200) -> Tuple[str, 
     if "could not be found" in status_out.lower():
         return "", "", (status_out or f"Unit {unit} could not be found."), unit
 
-    r2 = _run(["journalctl", "-u", unit, "-n", str(journal_lines), "--no-pager", "--output=short-iso"])
+    r2 = _run(["journalctl", "-u", unit, "-n", str(journal_lines), "--no-pager", "--output=short"])
     journal_out = (r2.stdout or "").strip()
 
     return status_out, journal_out, None, unit

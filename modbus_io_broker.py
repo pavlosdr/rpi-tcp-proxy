@@ -22,11 +22,6 @@ except ImportError:
 
 import paho.mqtt.client as mqtt
 
-# ---------------------- LOG runtime ---------------------- #
-print("__file__ running from:", __file__)
-print("PYTHON:", sys.executable)
-print("PAHO_VERSION:", getattr(mqtt, "__version__", "unknown"))
-print("HAS_V2:", hasattr(mqtt, "CallbackAPIVersion"))
 # ---------------------- KONFIGURACE ---------------------- #
 
 # ------------------------ .env --------------------------- #
@@ -88,6 +83,27 @@ CHANNELS_PER_SLAVE = env_int("MODBUS_IO_CHANNELS_PER_SLAVE", 6)
 
 HA_DISCOVERY = env_bool("MODBUS_IO_HA_DISCOVERY", True)
 HA_DISCOVERY_PREFIX = env_str("MODBUS_IO_HA_DISCOVERY_PREFIX", "homeassistant")
+
+# ---------------------- Logging ---------------------------
+# Log minimization
+LOG_LEVEL = getattr(logging, env_str("MODBUS_IO_LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="[%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("modbus_io_broker")
+logger.setLevel(LOG_LEVEL)
+# Utišení příliš ukecaného werkzeug
+logging.getLogger("werkzeug").setLevel(logging.INFO)
+logging.getLogger("pymodbus").setLevel(logging.WARNING)
+
+# ---------------------- LOG runtime ---------------------- #
+logger.debug("__file__ running from: %s", __file__)
+logger.debug("PYTHON: %s", sys.executable)
+logger.debug("PAHO_VERSION: %s", getattr(mqtt, "__version__", "unknown"))
+logger.debug("HAS_V2: %s", hasattr(mqtt, "CallbackAPIVersion"))
+
 # --------------- Generování INPUTS z .env -----------------
 # Definice IO modulů na sběrnici
 def parse_slave_list(s: str) -> list[int]:
@@ -105,7 +121,7 @@ def parse_pairs_csv(s: str) -> Set[Tuple[int, int]]:
         if not item:
             continue
         if ":" not in item:
-            logger.warning(f"Invalid MODBUS_IO_BUTTONS item '{item}' (expected slave:channel)")
+            logger.warning("Invalid MODBUS_IO_BUTTONS item '%s' (expected slave:channel)", item)
             continue
         a, b = item.split(":", 1)
         try:
@@ -163,26 +179,14 @@ def parse_used_channels(s: str) -> Set[Tuple[int, int]]:
         if not item:
             continue
         if ":" not in item:
-            logger.warning(f"Invalid MODBUS_IO_USED_CHANNELS item '{item}' (expected slave:channel)")
+            logger.warning("Invalid MODBUS_IO_USED_CHANNELS item '%s' (expected slave:channel)", item)
             continue
         a, b = item.split(":", 1)
         try:
             res.add((int(a.strip()), int(b.strip())))
         except ValueError:
-            logger.warning(f"Invalid MODBUS_IO_USED_CHANNELS item '{item}' (not integers)")
+            logger.warning("Invalid MODBUS_IO_USED_CHANNELS item '%s' (not integers)", item)
     return res
-
-# ---------------------- Logging ---------------------------
-# Log minimization
-LOG_FIRST_ERROR_ONLY = True   # jen první chyba po OK + recovered
-LOG_ERROR_COOLDOWN_S = 0      # 0 = nepoužívat periodické logy, opravdu ticho
-LOG_LEVEL = logging.INFO
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger("modbus_io_broker")
 
 # --------------- Nastavení MODBUS vstupů ------------------
 INPUTS = build_inputs_from_env()
@@ -312,12 +316,15 @@ def create_mqtt_client() -> mqtt.Client:
             try:
                 publish_ha_discovery(c)
             except Exception as e:
-                logger.warning(f"HA discovery publish failed: {e}")
+                logger.exception("HA discovery publish failed")
         else:
-            logger.error(f"MQTT: connect failed rc={rc}")
+            logger.error("MQTT: connect failed rc=%s", rc)
 
     def on_disconnect(c, userdata, rc):
-        logger.warning(f"MQTT: disconnected rc={rc}")
+        if rc == 0:
+            logger.info("MQTT: disconnected rc=%s", rc)
+        else:
+            logger.warning("MQTT: disconnected rc=%s", rc)
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
@@ -378,7 +385,7 @@ def main():
                 logger.info("Modbus: connected (port opened)")
                 break
         except Exception:
-            pass
+            logger.exception("Modbus: connect exception")
         logger.error("Modbus: connect failed, retry in 2s")
         time.sleep(2)
 
@@ -429,7 +436,7 @@ def main():
                     st["count"] += 1
                     if not st["in_error"]:
                         st["in_error"] = True
-                        logger.warning(f"Modbus read error unit={unit}: {rr}")
+                        logger.error("Modbus read error unit=%s: %s", unit, rr)
                     # další chyby už netiskneme (ticho)
                     # POZOR: tady už nespíme, sleep je na konci smyčky
                     continue
@@ -437,7 +444,7 @@ def main():
                 # OK: pokud jsme byli v chybě, zaloguj recovered 1×
                 if st["in_error"]:
                     st["in_error"] = False
-                    logger.info(f"Modbus unit={unit} recovered (errors={st['count']})")
+                    logger.info("Modbus unit=%s recovered (errors=%s)", unit, st["count"])
                     st["count"] = 0
 
                 # >>> TADY byla chyba: tenhle blok musí být mimo if st["in_error"] <<<
@@ -477,7 +484,7 @@ def main():
                     if typ == "switch":
                         prev_pub = published_states.get(name, None)
                         if prev_pub is None or prev_pub != new_stable:
-                            logger.info(f"State: {name} -> {'ON' if new_stable else 'OFF'}")
+                            logger.debug("State: %s -> %s", name, "ON" if new_stable else "OFF")
                             mqtt_publish_state(mqtt_client, name, new_stable)
                             published_states[name] = new_stable
 
@@ -503,7 +510,7 @@ def main():
                         logger.info("Startup sync completed: published initial switch states for all units")
 
             except Exception as e:
-                logger.exception(f"Polling exception: {e}")
+                logger.exception(f"Polling exception")
                 try:
                     modbus_client.close()
                 except Exception:

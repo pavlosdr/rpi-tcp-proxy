@@ -1,6 +1,9 @@
 import subprocess
 import shutil
 import re
+import os
+from collections import deque
+from typing import Dict, Any
 from services_control import SERVICE_WHITELIST
 
 SYSTEMCTL = "/bin/systemctl"
@@ -20,13 +23,15 @@ def get_wifi_signal():
     return "N/A"
 
 def get_system_info():
+    ip_by_if = get_ip_by_interface()
     return {
         "hostname": run("hostname"),
-        "ip_address": run("hostname -I"),
+        "ip_address": format_ip_lines_list(ip_by_if),
+        "wifi_ssid": get_wifi_ssid(),
+        "wifi_strength": get_wifi_signal(),
         "uptime": run("uptime -p"),
         "loadavg": run("cat /proc/loadavg | awk '{print $1, $2, $3}'"),
         "cpu_temp": run("vcgencmd measure_temp 2>/dev/null | cut -d= -f2") if shutil.which("vcgencmd") else "N/A",
-        "wifi_strength": get_wifi_signal(),
         "tailscale_status": get_tailscale_status()
     }
 
@@ -132,10 +137,24 @@ def get_iperf_test(server_ip="127.0.0.1", duration=10):
         return {"server": server_ip, "error": str(e)}
 
 
-def get_tailscale_status():
+def get_tailscale_status(lines: int = 10) -> str:
+    if not shutil.which("tailscale"):
+        return "N/A"
     try:
-        result = subprocess.run(["tailscale", "status"], capture_output=True, text=True)
-        return result.stdout.strip()
+        r = subprocess.run(
+            ["tailscale", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        out = (r.stdout or "").strip()
+        if not out:
+            # když něco spadne, často je info ve stderr
+            err = (r.stderr or "").strip()
+            return err or "N/A"
+        if lines and lines > 0:
+            out = "\n".join(out.splitlines()[:lines])
+        return out
     except Exception as e:
         return f"Error: {e}"
     
@@ -568,3 +587,118 @@ def systemctl_control(action: str, unit: str):
             )
         return False, f"{action} selhalo: {err or str(e)}"
     
+def get_wifi_ssid() -> str:
+    # 1) iwgetid (nejčistší)
+    if shutil.which("iwgetid"):
+        try:
+            r = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=3)
+            ssid = (r.stdout or "").strip()
+            if ssid:
+                return ssid
+        except Exception:
+            pass
+
+    # 2) iw dev wlan0 link
+    if shutil.which("iw"):
+        try:
+            r = subprocess.run(["iw", "dev", "wlan0", "link"], capture_output=True, text=True, timeout=3)
+            out = (r.stdout or "").strip()
+            for line in out.splitlines():
+                line = line.strip()
+                if line.lower().startswith("ssid:"):
+                    ssid = line.split(":", 1)[1].strip()
+                    if ssid:
+                        return ssid
+        except Exception:
+            pass
+
+    return "N/A"
+
+def get_ip_by_interface() -> dict:
+    """
+    Vrátí dict: { "eth0": ["192.168.1.19"], "wlan0": ["10.10.100.103"], "tailscale0": ["100.66.78.53"], ...}
+    """
+    if not shutil.which("ip"):
+        return {}
+
+    r = subprocess.run(
+        ["ip", "-o", "-4", "addr", "show"],
+        capture_output=True,
+        text=True,
+        timeout=3
+    )
+    out = (r.stdout or "").strip()
+    data: dict[str, list[str]] = {}
+
+    for line in out.splitlines():
+        # format: "2: eth0    inet 192.168.1.19/24 brd ... scope global eth0"
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        iface = parts[1]
+        if parts[2] != "inet":
+            continue
+        ip_cidr = parts[3]
+        ip = ip_cidr.split("/", 1)[0]
+        data.setdefault(iface, []).append(ip)
+
+    return data
+
+def format_ip_lines_list(ip_by_if: dict) -> list[str]:
+    lines: list[str] = []
+
+    def label_for_iface(iface: str) -> str:
+        if iface == "tailscale0":
+            return "VPN Tailscale"
+        if iface.startswith("wl"):
+            return "Wi-Fi"
+        if iface.startswith("en") or iface.startswith("eth"):
+            return "LAN"
+        if iface == "lo":
+            return "Loopback"
+        return "NET"
+
+    for iface, ips in (ip_by_if or {}).items():
+        label = label_for_iface(iface)
+        for ip in ips:
+            # JEDEN řádek = jedna IP
+            lines.append(f"{ip} ({iface}, {label})")
+
+    return lines or ["N/A"]
+
+def tail_file(path: str, n: int) -> str:
+    if not path:
+        return ""
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = deque(f, maxlen=max(1, int(n)))
+        return "".join(lines).rstrip()
+    except Exception as e:
+        return f"Error reading log file: {e}"
+
+def parse_mqtt_report_log_stats(text: str) -> Dict[str, Any]:
+    """
+    Heuristika: počítá výskyty typických hlášek v logu.
+    Pokud máš v logu jiné konkrétní texty, uprav regexy níže.
+    """
+    if not text:
+        return {"out_of_order": 0, "stray_response": 0, "duplicate_request": 0, "total": 0}
+
+    # case-insensitive a tolerantní
+    rx_out = re.compile(r"\bout\s*of\s*order\b", re.IGNORECASE)
+    rx_stray = re.compile(r"\bstray\s*response\b", re.IGNORECASE)
+    rx_dup = re.compile(r"\bduplicate\s*request\b", re.IGNORECASE)
+
+    out_of_order = len(rx_out.findall(text))
+    stray_response = len(rx_stray.findall(text))
+    duplicate_request = len(rx_dup.findall(text))
+    total = out_of_order + stray_response + duplicate_request
+
+    return {
+        "out_of_order": out_of_order,
+        "stray_response": stray_response,
+        "duplicate_request": duplicate_request,
+        "total": total,
+    }

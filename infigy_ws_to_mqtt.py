@@ -2,21 +2,82 @@ import os
 import time
 import json
 import threading
+import logging
 import socketio
 import socket
-import traceback
 import sys
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 
+# ---------------------- KONFIGURACE ---------------------- #
+
+# ------------------------ .env --------------------------- #
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path=ENV_PATH)
+
+# ----------------- Helpery pro čtení .env  --------------- #
+def env_str(key: str, default: str = "") -> str:
+    v = os.getenv(key)
+    return v.strip() if v is not None and str(v).strip() != "" else default
+
+def env_int(key: str, default: int) -> int:
+    v = env_str(key, "")
+    return int(v) if v else default
+
+def env_float(key: str, default: float) -> float:
+    v = env_str(key, "")
+    return float(v) if v else default
+# ------------------- Konfig z .env ----------------------- #
+# ------------------------ MQTT --------------------------- # 
+MQTT_HOST   = env_str("MQTT_HOST", "localhost")
+MQTT_PORT   = env_int("MQTT_PORT", 1883)
+MQTT_USER   = env_str("MQTT_USER", "")
+MQTT_PASS   = env_str("MQTT_PASS", "")
+MQTT_BASE   = env_str("MQTT_BASE_INFIGY", "infigy")
+CLIENT_ID   = env_str("CLIENT_ID_INFIGY","infigy-bridge")
+AUTH_COOKIE = env_str("AUTH_COOKIE", "").strip()
+AUTH_BEARER = env_str("AUTH_BEARER", "").strip()
+MQTT_WATCHDOG_INTERVAL_S = env_int("MQTT_WATCHDOG_INTERVAL_S", 15)
+MQTT_RECONNECT_BACKOFF_MAX_S = env_int("MQTT_RECONNECT_BACKOFF_MAX_S", 60)
+# ----------------------- INFIGY --------------------------- #
+INFIGY_HOST = env_str("INFIGY_HOST", "http://127.0.0.1")
+SOCKET_PATH = env_str("SOCKET_PATH", "/socket.io")
+DISCOVERY_PREFIX = env_str("DISCOVERY_PREFIX", "homeassistant")
+DEVICE_ID = env_str("DEVICE_ID", "Infigy") 
+ENTITY_PREFIX = env_str("ENTITY_PREFIX", "infigy") # optional, defaults to "infigy"
+ENERGY_STATE_PATH = env_str("ENERGY_STATE_PATH", os.path.join(BASE_DIR, "energy_state.json"))
+ENERGY_PUBLISH_INTERVAL_S = env_int("ENERGY_PUBLISH_INTERVAL_S", 30)
+INTEGRATOR_TICK_S = env_float("INTEGRATOR_TICK_S", 5.0)
+HEARTBEAT_MAX_AGE_S = env_int("HEARTBEAT_MAX_AGE_S", 180)
+
+# ---------------------- Logging ---------------------------
+# Log minimization
+LOG_LEVEL = getattr(logging, env_str("INFIGY_LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="[%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger("infigy-mqtt")
+logger.setLevel(LOG_LEVEL)
+
+# ---------------------- LOG runtime ---------------------- #
+logger.debug("__file__ running from: %s", __file__)
+logger.debug("PYTHON: %s", sys.executable)
+logger.debug("PAHO_VERSION: %s", getattr(mqtt, "__version__", "unknown"))
+logger.debug("HAS_V2: %s", hasattr(mqtt, "CallbackAPIVersion"))
+
 # ------------------ connection latches ------------------- #
 connected = threading.Event()
-last_event_ts = time.monotonic() # heartbeat for WS payloads
-# ---------------------- LOG runtime ---------------------- #
-print("__file__ running from:", __file__)
-print("PYTHON:", sys.executable)
-print("PAHO_VERSION:", getattr(mqtt, "__version__", "unknown"))
-print("HAS_V2:", hasattr(mqtt, "CallbackAPIVersion"))
+last_event_ts = time.monotonic() # heartbeat for published payloads
+# ------- Singleton lock: zabran spusteni 2. instance ----- #
+_singleton = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+try:
+    _singleton.bind("\0infigy_ws_to_mqtt.singleton")
+except OSError:
+    logger.warning("Another infigy_ws_to_mqtt instance is running. Exiting.")
+    sys.exit(1)
 
 # aktuální výkonové hodnoty (W) pro integrátor
 current_power = {
@@ -39,45 +100,9 @@ energy_totals = {
 "bat_discharge": 0.0,
 "boiler_total": 0.0
 }
-# ---------------------- KONFIGURACE ---------------------- #
-# ------------------------ .env --------------------------- #
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_PATH = os.path.join(BASE_DIR, ".env")
-load_dotenv(dotenv_path=ENV_PATH)
 
-# ------------------- Konfig z .env ----------------------- #
-# MQTT 
-MQTT_HOST   = os.getenv("MQTT_HOST", "localhost")
-MQTT_PORT   = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_USER   = os.getenv("MQTT_USER", "")
-MQTT_PASS   = os.getenv("MQTT_PASS", "")
-MQTT_BASE   = os.getenv("MQTT_BASE_INFIGY", "infigy")
-CLIENT_ID   = os.getenv("CLIENT_ID_INFIGY","infigy-bridge")
-AUTH_COOKIE = os.getenv("AUTH_COOKIE", "").strip()
-AUTH_BEARER = os.getenv("AUTH_BEARER", "").strip()
-MQTT_WATCHDOG_INTERVAL_S = int(os.getenv("MQTT_WATCHDOG_INTERVAL_S", "15"))
-MQTT_RECONNECT_BACKOFF_MAX_S = int(os.getenv("MQTT_RECONNECT_BACKOFF_MAX_S", "60"))
-# Infigy
-INFIGY_HOST = os.getenv("INFIGY_HOST", "http://127.0.0.1")
-SOCKET_PATH = os.getenv("SOCKET_PATH", "/socket.io")
-DISCOVERY_PREFIX = os.getenv("DISCOVERY_PREFIX", "homeassistant")
-DEVICE_ID = os.getenv("DEVICE_ID", "Infigy") 
-ENTITY_PREFIX = os.getenv("ENTITY_PREFIX", "infigy") # optional, defaults to "infigy"
-SW_VERSION = os.getenv("SW_VERSION", "1.1")
-ENERGY_STATE_PATH = os.getenv("ENERGY_STATE_PATH", os.path.join(BASE_DIR, "energy_state.json"))
-ENERGY_PUBLISH_INTERVAL_S = int(os.getenv("ENERGY_PUBLISH_INTERVAL_S", "30"))
-INTEGRATOR_TICK_S = float(os.getenv("INTEGRATOR_TICK_S", "5"))
-HEARTBEAT_MAX_AGE_S = int(os.getenv("HEARTBEAT_MAX_AGE_S", "180"))
 
-# --- Singleton lock: zabran spusteni 2. instance ---
-_singleton = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-try:
-    _singleton.bind("\0infigy_ws_to_mqtt.singleton")
-except OSError:
-    print("Another infigy_ws_to_mqtt instance is running. Exiting.")
-    sys.exit(1)
-
-# --- MQTT klient ---
+# ------------------------ MQTT klient ---------------------- #
 mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id=CLIENT_ID,clean_session=True)
 if MQTT_USER:
     mqttc.username_pw_set(MQTT_USER, MQTT_PASS)
@@ -87,7 +112,7 @@ mqttc.will_set(f"{MQTT_BASE}/bridge/online", "0", qos=1, retain=True)
 # Auto-reconnect backoff
 mqttc.reconnect_delay_set(min_delay=2, max_delay=MQTT_RECONNECT_BACKOFF_MAX_S)
 
-# ---------------------- helpers -------------------------- #
+# ------------------------ helpers -------------------------- #
 def touch():
     global last_event_ts
     last_event_ts = time.monotonic()
@@ -104,7 +129,7 @@ def publish(topic_suffix, payload, retain=True, qos=1):
     try:
         mqttc.publish(topic, str(payload), qos=qos, retain=retain)
     except Exception as e:
-        print(f"[MQTT] publish failed {topic}: {e}")    
+        logger.exception("MQTT publish failed topic=%s", topic)    
 
 
 def load_energy_state():
@@ -116,7 +141,7 @@ def load_energy_state():
     except FileNotFoundError:
         pass
     except Exception as e:
-        print("ENERGY STATE load error:", e)
+        logger.exception("ENERGY STATE load error path=%s", ENERGY_STATE_PATH)
 
 def save_energy_state():
     try:
@@ -125,9 +150,9 @@ def save_energy_state():
             json.dump(energy_totals, f, ensure_ascii=False)
         os.replace(tmp_path, ENERGY_STATE_PATH)
     except Exception as e:
-        print("ENERGY STATE save error:", e)
+        logger.exception("ENERGY STATE save error path=%s", ENERGY_STATE_PATH)
 
-# ---------- MQTT Discovery ----------
+# ----------------------- MQTT Discovery -------------------- #
 def _disc_topic(domain: str, object_id: str) -> str:
     return f"{DISCOVERY_PREFIX}/{domain}/{DEVICE_ID}/{object_id}/config"
 
@@ -137,7 +162,6 @@ def _disc_device():
         "manufacturer": "PavlosDr",
         "model": "Infigy WS>>MQTT Bridge",
         "name": "Infigy",
-        "sw_version": SW_VERSION,
     }
 
 def _oid(suffix: str) -> str:
@@ -391,7 +415,7 @@ def publish_discovery():
     # - entity_id will be stable: e.g. sensor.infigy_boiler_temperature, binary_sensor.infigy_bridge_online, ...
     # - You can change ENTITY_PREFIX via .env to namespace multiple bridges.
 
-# --- MQTT callbacks ---
+# ---------------------- MQTT callbacks --------------------- #
 # v2 i v1 kompatibilní on_connect - zamezí error v rozdílném počtu parametrů
 def _normalize_code(raw):
     code = getattr(raw, "value", raw)
@@ -405,13 +429,13 @@ def on_connect(client, userdata, *args, **kwargs):
     if len(args) > 1:
         raw = args[1]
     code = _normalize_code(raw)
-    print(f"MQTT connected rc={code}")
+    logger.info("MQTT connected rc=%s", code)
     if code == 0:
         publish("bridge/online", "1", retain=True, qos=1)
         try:
             publish_discovery() # auto discovery po připojení
         except Exception as e:
-            print(f"publish_discovery() failed: {e}")
+            logger.exception("publish_discovery failed")
         connected.set()
 
 def on_disconnect(client, userdata, *args, **kwargs):
@@ -420,13 +444,16 @@ def on_disconnect(client, userdata, *args, **kwargs):
     if len(args) > 0:
         raw = args[0]
     code = _normalize_code(raw)
-    print(f"MQTT disconnected rc={code}")
+    if code == 0:
+        logger.info("MQTT disconnected rc=%s", code)
+    else:
+        logger.warning("MQTT disconnected rc=%s", code)
     connected.clear()
 
 mqttc.on_connect = on_connect
 mqttc.on_disconnect = on_disconnect
 
-# --- Socket.IO ---
+# ------------------------ Socket.IO ------------------------ #
 sio = socketio.Client(
     reconnection=True, 
     reconnection_attempts=0, 
@@ -436,15 +463,15 @@ sio = socketio.Client(
 
 @sio.event
 def connect():
-    print("infigy_ws_to_mqtt: connected")
+    logger.info("Socket.IO connected")
 
 @sio.event
 def disconnect():
-    print("infigy_ws_to_mqtt: disconnected")
+    logger.warning("Socket.IO disconnected")
 
 @sio.event
 def connect_error(msg):
-    print("infigy_ws_to_mqtt connect_error:", msg)
+    logger.warning("Socket.IO connect_error: %s", msg)
 
 @sio.on("store:change")
 def on_store_change(data):
@@ -528,8 +555,7 @@ def on_store_change(data):
     #   mqttc.publish("zzz_stream", "1", qos=0, retain=False)  # každá zpráva = tichý impulz
 
     except Exception as e:
-        print("infigy_ws_to_mqtt parse error:", e)
-        traceback.print_exc()
+        logger.exception("infigy_ws_to_mqtt parse error (store:change)")
 
 # --- background watchdogs + heartbeat ---
 def watchdog_ws():
@@ -538,14 +564,14 @@ def watchdog_ws():
         try:
             age = time.monotonic() - last_event_ts
             if age > 180:
-                print("WATCHDOG: no store:change >180s >>> reconnect infigy_ws_to_mqtt")
+                logger.warning("WATCHDOG: no store:change for %ss -> reconnect Socket.IO", int(age))
                 try:
                     sio.disconnect()
                 except Exception:
                     pass
             time.sleep(15)
         except Exception as e:
-            print("WATCHDOG error:", e)
+            logger.exception("WATCHDOG error")
             time.sleep(15)
 
 def publish_heartbeat():
@@ -558,7 +584,7 @@ def publish_heartbeat():
             ws_ok = "1" if age < HEARTBEAT_MAX_AGE_S else "0"
             publish("bridge/ws_flow_ok", ws_ok, retain=True, qos=0)
         except Exception:
-            pass
+            logger.debug("Heartbeat publish failed", exc_info=True)
         time.sleep(30)
 
 #  Watchdog vlákno MQTT (automatický reconnect + obnova loopu)
@@ -573,11 +599,11 @@ def _mqtt_watchdog_loop(stop_evt: threading.Event):
         try:
             # 1) Když není připojeno → reconnect
             if not mqttc.is_connected():
-                print(f"[MQTT-WD] Not connected >> reconnect() (backoff={backoff}s)")
+                logger.debug("[MQTT-WD] Not connected -> reconnect() (backoff=%ss)", backoff)
                 try:
                     mqttc.reconnect()
                 except Exception as e:
-                    print(f"[MQTT-WD] reconnect() failed: {e}")
+                    logger.warning("[MQTT-WD] reconnect() failed: %s", e)
                 else:
                     backoff = 2  # po úspěchu reset backoffu
 
@@ -587,9 +613,9 @@ def _mqtt_watchdog_loop(stop_evt: threading.Event):
                 # Pozn.: Paho bez problémů snese opakované volání loop_start()
                 try:
                     mqttc.loop_start()
-                    print("[MQTT-WD] loop_start() ensured")
+                    logger.debug("[MQTT-WD] loop_start() ensured")
                 except Exception as e:
-                    print(f"[MQTT-WD] loop_start() failed: {e}")
+                    logger.warning("[MQTT-WD] loop_start() failed: %s", e)
 
             # 3) Jemný backoff, pokud stále odpojeno
             if not mqttc.is_connected():
@@ -598,12 +624,14 @@ def _mqtt_watchdog_loop(stop_evt: threading.Event):
             else:
                 stop_evt.wait(MQTT_WATCHDOG_INTERVAL_S)
         except Exception as e:
-            print(f"[MQTT-WD] Unexpected error: {e}")
+            logger.exception("[MQTT-WD] Unexpected error")
             stop_evt.wait(MQTT_WATCHDOG_INTERVAL_S)
 
 # --- integrátor energií (trapézová aproximace) ---
 
 def energy_integrator():
+    logger.info("Energy integrator started tick=%ss publish_interval=%ss state=%s",
+            INTEGRATOR_TICK_S, ENERGY_PUBLISH_INTERVAL_S, ENERGY_STATE_PATH)
     load_energy_state()
     last_t = time.monotonic()
     last_p = current_power.copy() # W
@@ -642,7 +670,7 @@ def energy_integrator():
                 publish("energy/boiler_kwh", round(energy_totals["boiler_total"], 6), retain=True, qos=1)
                 save_energy_state()
         except Exception as e:
-            print("ENERGY integrator error:", e)
+            logger.exception("ENERGY integrator error")
             time.sleep(2)
 
 # --- connect options for Socket.IO ---
@@ -652,19 +680,20 @@ if AUTH_COOKIE:
 if AUTH_BEARER:
     EXTRA_HEADERS["Authorization"] = f"Bearer {AUTH_BEARER}"
 
-print(f"CFG INFIGY_HOST={INFIGY_HOST} SOCKET_PATH={SOCKET_PATH}")
-print(f"CFG MQTT_HOST={MQTT_HOST}:{MQTT_PORT} USER={'set' if MQTT_USER else 'none'}")
-print(f"CFG MQTT_BASE={MQTT_BASE} DEVICE_ID={DEVICE_ID}")
+logger.info("CFG INFIGY_HOST=%s SOCKET_PATH=%s", INFIGY_HOST, SOCKET_PATH)
+logger.info("CFG MQTT_HOST=%s:%s USER=%s", MQTT_HOST, MQTT_PORT, "set" if MQTT_USER else "none")
+logger.info("CFG MQTT_BASE=%s DEVICE_ID=%s", MQTT_BASE, DEVICE_ID)
 
 
 def main():
+    logger.info("Connecting to MQTT broker %s:%s ...", MQTT_HOST, MQTT_PORT)
     # MQTT connect
     mqttc.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     mqttc.loop_start()
 
     # Počkej max 5 s na připojení (jinak to zkusíme dál – WS poběží a MQTT se připojí později)
     if not connected.wait(5):
-       print("MQTT not connected yet; will publish after connect() callback.")
+       logger.warning("MQTT not connected yet; will publish after connect() callback.")
     
     # Start MQTT watchdogu
     stop_evt = threading.Event()
@@ -687,8 +716,7 @@ def main():
             )
             sio.wait()
         except Exception as e:
-            print("infigy_ws_to_mqtt connect error:", e)
-            traceback.print_exc()
+            logger.exception("Socket.IO connect loop error")
             time.sleep(5)
 
 if __name__ == "__main__":
