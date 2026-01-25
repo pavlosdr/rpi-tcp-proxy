@@ -1,12 +1,54 @@
-# /opt/rpi-admin-ui/envfile.py
-from __future__ import annotations
+"""
+.env configuration helpers
 
+Utility funkce pro bezpečné čtení a parsování
+konfiguračních hodnot z .env souborů.
+
+Funkce:
+- env_str / env_int / env_float / env_bool
+- Výchozí hodnoty a validace
+- Jednotné chování napříč projektem
+
+Používáno ve všech službách rpi-admin-ui.
+"""
+
+from __future__ import annotations
+from dotenv import load_dotenv
 import os
 import re
 import shutil
 import tempfile
 from datetime import datetime
 from typing import Dict, Tuple, List
+
+# ---------------------- KONFIGURACE ---------------------- #
+
+# ------------------------ .env --------------------------- #
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # načti .env ze stejného adresáře
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path=ENV_PATH)
+# ----------------- Helpery pro čtení .env  --------------- #
+def env_str(key: str, default: str = "") -> str:
+    v = os.getenv(key)
+    return v.strip() if v is not None and str(v).strip() != "" else default
+
+def env_int(key: str, default: int) -> int:
+    v = env_str(key, "")
+    return int(v) if v else default
+
+def env_float(key: str, default: float) -> float:
+    v = env_str(key, "")
+    return float(v) if v else default
+
+def env_bool(key: str, default: bool = False) -> bool:
+    v = env_str(key, "")
+    if not v:
+        return default
+    return v.lower() in ("1", "true", "yes", "on")
+# ------------------- Konfig z .env ----------------------- #
+SUDO  = env_str("UI_SUDO","/usr/bin/sudo")
+SYSTEMCTL = env_str("UI_SYSTEMCTL","/bin/systemctl")
+# --------------------------------------------------------- #
 
 _ENV_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$')
 
@@ -84,3 +126,4 @@ def update_env_file(path: str, updates: Dict[str, str]) -> Tuple[bool, str]:
         except Exception:
             pass
         return False, f"Chyba při zápisu .env: {e}"
+    

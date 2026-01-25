@@ -1,0 +1,130 @@
+{# templates/settings_mqtt_discovery.html #}
+{% extends "base.html" %}
+
+{% block title %}Nastaveni - MQTT Discovery{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+
+  <h1 class="h4 mb-3">MQTT Discovery - retained config (list a clean-up)</h1>
+
+  <div class="card mb-3">
+    <div class="card-body">
+
+      <form method="post" action="{{ url_for('settings_mqtt_discovery_list') }}" class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Sluzba</label>
+          <select class="form-select" name="service" required>
+            {% for t in targets %}
+              <option value="{{ t.key }}" {% if t.key == selected %}selected{% endif %}>
+                {{ t.label }}{% if t.device_id %} ({{ t.device_id }}){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            Filtruje se podle device_id v discovery topicu: homeassistant/&lt;domain&gt;/&lt;device_id&gt;/&lt;object_id&gt;/config
+          </div>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Contains (volitelne)</label>
+          <input class="form-control" type="text" name="contains" value="{{ contains }}" placeholder="napr. battery, bridge, modbus_io_128">
+          <div class="form-text">Omezi topic jen na ty, ktere obsahuji podretezec.</div>
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">Window (s)</label>
+          <input class="form-control" type="text" name="window_s" value="{{ window_s }}">
+          <div class="form-text">Jak dlouho sberame retained zpravy po subscribe.</div>
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">Limit</label>
+          <input class="form-control" type="number" name="limit" value="{{ limit }}" min="1" max="10000">
+          <div class="form-text">Max pocet nalezenych topicu.</div>
+        </div>
+
+        <div class="col-md-1 d-flex align-items-end">
+          <button type="submit" class="btn btn-primary w-100">List</button>
+        </div>
+      </form>
+
+      <hr class="my-3">
+
+      <form method="post" action="{{ url_for('settings_mqtt_discovery_cleanup') }}" class="row g-3">
+        <input type="hidden" name="service" value="{{ selected }}">
+        <input type="hidden" name="contains" value="{{ contains }}">
+        <input type="hidden" name="window_s" value="{{ window_s }}">
+        <input type="hidden" name="limit" value="2000">
+
+        <div class="col-md-9">
+          <div class="alert alert-warning mb-0">
+            Clean-up smaze retained discovery configy pro vybranou sluzbu (device_id) a volitelny filtr contains.
+            Mazani probiha publish(NULL, retain=True) na prislusne discovery topicy.
+          </div>
+        </div>
+
+        <div class="col-md-3 d-flex align-items-end">
+          <button type="submit" class="btn btn-danger w-100"
+                  onclick="return confirm('Opravdu smazat retained discovery configy pro vybranou sluzbu?');">
+            Clean-up
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+  {% if stats %}
+  <div class="alert alert-info">
+    Sluzba: <b>{{ stats.service }}</b>,
+    device_id: <b>{{ stats.device_id }}</b>,
+    found: <b>{{ stats.found }}</b>,
+    deleted: <b>{{ stats.deleted }}</b>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-header">
+      Retained discovery items ({{ items|length }})
+    </div>
+    <div class="card-body p-0">
+      {% if items and items|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th style="width: 45%;">Topic</th>
+              <th style="width: 10%;">Retain</th>
+              <th style="width: 10%;">QoS</th>
+              <th>Payload (JSON)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for it in items %}
+            <tr>
+              <td><code>{{ it.topic }}</code></td>
+              <td>{{ "yes" if it.retain else "no" }}</td>
+              <td>{{ it.qos }}</td>
+              <td>
+                {% if it.json %}
+                  <pre class="mb-0" style="white-space: pre-wrap;">{{ it.json | tojson(indent=2) }}</pre>
+                {% else %}
+                  <pre class="mb-0" style="white-space: pre-wrap;">{{ it.payload }}</pre>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="p-3">
+        <div class="text-muted">Zatim nic. Pouzij tlacitko List.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

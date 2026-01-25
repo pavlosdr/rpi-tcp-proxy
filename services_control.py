@@ -1,9 +1,37 @@
-# services_control.py
+"""
+Systemd services control (RPi Admin UI)
+
+Modul pro bezpečné ovládání vybraných systemd služeb z webového UI.
+
+Co dělá:
+- Definuje katalog služeb (SERVICES_META) používaný v UI (název, unit, popis, ikonka)
+- Z katalogu vytvoří whitelist (SERVICE_WHITELIST) a validuje duplicity / chybné unity
+- Normalizuje vstupní service_id (resolve_service_key) pro kompatibilitu:
+  - kanonický klíč (např. "ui", "mqtt-report")
+  - unit ("rpi-admin-ui.service")
+  - base unit bez .service ("rpi-admin-ui")
+  - legacy meta["id"] (fallback)
+- Spouští systemctl příkazy pouze z povolené množiny akcí (_ALLOWED_SYSTEMCTL_ACTIONS)
+  a bezpečně (sudo -n, --no-ask-password, timeout, stdout/stderr sloučeno)
+
+Veřejné funkce (používá UI):
+- start_service_safe(), stop_service_safe(), restart_service_safe()
+- is_active()
+- get_service_detail() (systemctl status + journalctl -u)
+
+Bezpečnostní zásady:
+- Nelze ovládat libovolnou službu: pouze služby definované v SERVICES_META
+- Nelze provést libovolnou akci: pouze akce z _ALLOWED_SYSTEMCTL_ACTIONS
+- Bez interaktivních promptů: používá sudo -n a systemctl --no-ask-password
+
+Poznámky:
+- Tento modul neřeší autentizaci UI (to je v auth/app vrstvě).
+- Při timeoutu systemctl vrací returncode 124 a text "Timeout..." místo pádu aplikace.
+"""
+
 import subprocess
 from typing import Dict, Tuple, Optional, Sequence
-
-SYSTEMCTL = "/usr/bin/systemctl"
-SUDO = "/usr/bin/sudo"
+from envfile import SUDO, SYSTEMCTL
 
 _ALLOWED_SYSTEMCTL_ACTIONS = {
     "start",
@@ -68,6 +96,54 @@ SERVICES_META: Dict[str, dict] = {
             "a GoodWe měničem. Řeší nestandardní chování TID/UID a zajišťuje stabilitu spojení."
         ),
         "icon": "bi bi-hdd-network",
+    },
+
+    "ha-watchdog": {
+        "pretty_name": "RPi Home Assistant Watchdog",
+        "unit": "ha_watchdog.service",
+        "description": (
+            "Watchdog běžící na Raspberry Pi, který hlídá dostupnost Home Assistant (HA OS) "
+            "na síti (např. 192.168.1.20). Při opakovaném výpadku může přes SSH provést restart "
+            "HA a současně umí publikovat stav do MQTT (bridge/* dle infigy normy) a posílat "
+            "notifikace na Telegram."
+        ),
+        "icon": "bi bi-shield-check",
+    },    
+}
+
+MQTT_DISCOVERY_TARGETS = {
+    "infigy": {
+        "device_id_env": "INFIGY_MQTT_DEVICE_ID",
+        "label": "Infigy bridge",
+        "host_env": "INFIGY_MQTT_HOST",
+        "port_env": "INFIGY_MQTT_PORT",
+        "username_env": "INFIGY_MQTT_USER",
+        "password_env": "INFIGY_MQTT_PASS",
+        "discovery_prefix_env": "INFIGY_MQTT_DISCOVERY_PREFIX", 
+        "base_topic_env": "INFIGY_MQTT_BASE",
+        "client_id_env": "INFIGY_MQTT_CLIENT_ID",
+    },
+    "report": {
+        "device_id_env": "MQTT_REPORT_DEVICE_ID",
+        "label": "RPi report",
+        "host_env": "MQTT_REPORT_HOST",
+        "port_env": "MQTT_REPORT_PORT",
+        "username_env": "MQTT_REPORT_USER",
+        "password_env": "MQTT_REPORT_PASS",
+        "discovery_prefix_env": "MQTT_REPORT_DISCOVERY_PREFIX",
+        "base_topic_env": "MQTT_REPORT_BASE_TOPIC",
+        "client_id_env": "MQTT_REPORT_CLIENT_ID",
+    },
+    "modbus_io": {
+        "device_id_env": "MODBUS_IO_MQTT_DEVICE_ID",
+        "label": "Modbus IO broker",
+        "host_env": "MODBUS_IO_MQTT_HOST",
+        "port_env": "MODBUS_IO_MQTT_PORT",
+        "username_env": "MODBUS_IO_MQTT_USERNAME",
+        "password_env": "MODBUS_IO_MQTT_PASSWORD",
+        "discovery_prefix_env": "MODBUS_IO_HA_DISCOVERY_PREFIX",
+        "base_topic_env": "MODBUS_IO_MQTT_BASE_TOPIC",
+        "client_id_env": "MODBUS_IO_MQTT_CLIENT_ID",
     },
 }
 

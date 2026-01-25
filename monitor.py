@@ -1,3 +1,21 @@
+"""
+System & service monitor
+
+Modul zajišťující monitoring stavu systému a služeb
+pro rpi-admin-ui.
+
+Funkce:
+- Kontrola běhu systemd služeb
+- Zjišťování uptime, load, paměti
+- Ping / dostupnost hostů
+- Podkladová data pro webové UI
+
+Používáno:
+- app.py
+- ha_watchdog.py
+"""
+
+from dotenv import load_dotenv
 import subprocess
 import shutil
 import re
@@ -5,10 +23,9 @@ import os
 from collections import deque
 from typing import Dict, Any
 from services_control import SERVICE_WHITELIST
+from envfile import SUDO, SYSTEMCTL
 
-SYSTEMCTL = "/bin/systemctl"
-SUDO = "/usr/bin/sudo"
-
+# --------------------------------------------------------- #
 def run(cmd):
     try:
         return subprocess.check_output(cmd, shell=True, text=True).strip()
@@ -677,28 +694,3 @@ def tail_file(path: str, n: int) -> str:
         return "".join(lines).rstrip()
     except Exception as e:
         return f"Error reading log file: {e}"
-
-def parse_mqtt_report_log_stats(text: str) -> Dict[str, Any]:
-    """
-    Heuristika: počítá výskyty typických hlášek v logu.
-    Pokud máš v logu jiné konkrétní texty, uprav regexy níže.
-    """
-    if not text:
-        return {"out_of_order": 0, "stray_response": 0, "duplicate_request": 0, "total": 0}
-
-    # case-insensitive a tolerantní
-    rx_out = re.compile(r"\bout\s*of\s*order\b", re.IGNORECASE)
-    rx_stray = re.compile(r"\bstray\s*response\b", re.IGNORECASE)
-    rx_dup = re.compile(r"\bduplicate\s*request\b", re.IGNORECASE)
-
-    out_of_order = len(rx_out.findall(text))
-    stray_response = len(rx_stray.findall(text))
-    duplicate_request = len(rx_dup.findall(text))
-    total = out_of_order + stray_response + duplicate_request
-
-    return {
-        "out_of_order": out_of_order,
-        "stray_response": stray_response,
-        "duplicate_request": duplicate_request,
-        "total": total,
-    }

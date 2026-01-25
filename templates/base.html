@@ -79,10 +79,9 @@
               </li>
 
               <li><hr class="dropdown-divider"></li>
-
               <li>
-                <a class="dropdown-item {% if request.endpoint=='mqtt_discovery' %}active{% endif %}"
-                  href="{{ url_for('mqtt_discovery') }}">
+                <a class="dropdown-item {% if request.endpoint=='settings_mqtt_discovery' %}active{% endif %}"
+                  href="{{ url_for('settings_mqtt_discovery_page') }}">
                   <i class="bi bi-broadcast me-2"></i>MQTT Discovery
                 </a>
               </li>

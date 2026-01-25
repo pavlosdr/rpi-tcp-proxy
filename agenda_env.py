@@ -1,4 +1,19 @@
-# /opt/rpi-admin-ui/agenda_env.py
+"""
+Agenda-specific environment helpers
+
+Pomocné funkce pro práci s .env konfigurací
+jednotlivých agend (služeb).
+
+Funkce:
+- Načítání a ukládání .env hodnot pro agendy
+- Validace konfiguračních klíčů
+- Podpora UI editace konfigurace
+
+Používáno:
+- app.py
+- agendas.py
+"""
+
 from __future__ import annotations
 
 from typing import Dict, Tuple, Any

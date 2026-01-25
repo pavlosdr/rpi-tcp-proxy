@@ -1,4 +1,18 @@
-# /opt/rpi-admin-ui/config/agendas.py
+"""
+Agendas registry & metadata
+
+Obsahuje metadata pro UI, systemd a konfigurační vazby. Podle nastavení se zobrazují
+konfigurační parametry v jednotlivých záložkách a sekcích
+
+Funkce:
+- Popisy, ikony a cesty ke konfiguraci
+- Zdroj pravdy pro UI přehled a správu služeb
+
+Používáno:
+- app.py (UI)
+- monitor.py
+- ha_watchdog.py
+"""
 from __future__ import annotations
 
 AGENDAS = {
@@ -15,99 +29,46 @@ AGENDAS = {
             {"id": "modbus", "label": "Modbus RTU"},
             {"id": "iomap",  "label": "IO map"},
             {"id": "diag",   "label": "Diagnostika"},
-            {"id": "ha",     "label": "Home Assistant"},
             {"id": "logging", "label": "Logging"},
             {"id": "other",  "label": "Ostatni"},
         ],
 
         "sections": [
-            {
-                "id": "basic_main",
-                "tab": "basic",
-                "label": "Obecne",
-                "tooltip": "Zakladni prepinac agendy. Pokud je broker vypnuty (0), po startu se ukonci a nic nepublikuje do MQTT.",
-            },
-            {
-                "id": "mqtt_conn",
-                "tab": "mqtt",
-                "label": "Pripojeni k brokeru",
-                "tooltip": "Parametry pripojeni k MQTT brokeru (host, port, volitelne prihlaseni). Bez spravneho pripojeni broker nepublikuje stavy ani udalosti.",
-            },
-            {
-                "id": "mqtt_topic",
-                "tab": "mqtt",
-                "label": "Topic / identita",
-                "tooltip": "Identita klienta a zakladni namespace topicu. Client ID musi byt unikatni na brokeru. Base topic urcuje, kam broker publikuje state/event.",
-            },
-            {
-                "id": "modbus_rtu",
-                "tab": "modbus",
-                "label": "Parametry linky",
-                "tooltip": "Nastaveni seriove Modbus RTU linky (port, baudrate, parita, stopbity, bytesize, timeout). Pri chybach zkontroluj port /dev/serial/by-id a parametry linky na IO modulech.",
-            },
-            {
-                "id": "poll_debounce",
-                "tab": "modbus",
-                "label": "Polling / debounce",
-                "tooltip": "Rychlost dotazovani a odruseni vstupu. Poll interval urcuje pauzu mezi dotazy, debounce filtruje zakmit tlacitek/vypinacu. Prilis male hodnoty mohou zatezovat sbernici nebo delat falešne prechody.",
-            },
-            {
-                "id": "iomap_main",
-                "tab": "iomap",
-                "label": "Topologie / mapovani",
-                "tooltip": "Definice slave adres a kanalu. Slaves + channels-per-slave urcuji topologii. Used channels omezi, ktere vstupy se vubec zpracovavaji. Buttons prepinaji vybrane kanaly do rezimu tlacitka (event).",
-            },
-            {
-                "id": "diag_mqtt",
-                "tab": "diag",
-                "label": "MQTT latency test",
-                "tooltip": "Nastaveni diagnostickeho testu latence MQTT (pocet vzorku, interval, timeout). Test meri publish -> broker -> receive v ramci stejneho klienta (loopback pres broker).",
-            },
-            {
-                "id": "diag_mqtt_thr",
-                "tab": "diag",
-                "label": "MQTT latency semafor",
-                "tooltip": "Prahy pro vyhodnoceni latence (OK/WARN) a topic prefix pro diagnostiku. UI pouzije oddeleny prefix, aby se nepletly produkcni topicy s diagnostikou.",
-            },
-            {
-                "id": "diag_modbus",
-                "tab": "diag",
-                "label": "Modbus RTT test",
-                "tooltip": "Nastaveni RTT testu sbernice Modbus (metoda, adresa, count, interval, prahy OK/WARN). Slouzi k overeni odezvy IO modulu a stability linky.",
-            },
-            {
-                "id": "ha_pub",
-                "tab": "ha",
-                "label": "Publikovani do HA",
-                "tooltip": "Home Assistant MQTT Discovery. Zapnutim se generuji discovery entity pod prefixem (typicky homeassistant). Pokud mas discovery vypnute, entity si musis definovat rucne v HA.",
-            },
-            {
-                "id": "other_auto",
-                "tab": "other",
-                "label": "Ostatni (detekovano)",
-                "description": "Klice MODBUS_IO_* nalezene v .env, ktere nejsou explicitne v konfiguraci (read-only).",
-                "tooltip": "Automaticky detekovane klice MODBUS_IO_* z .env, ktere nemaji metadata. Zobrazuji se pouze pro prehled (read-only), aby se nic omylem neupravilo.",
-            },
+            {"id": "basic_main", "tab": "basic", "label": "Obecné", 
+             "tooltip": "Zakladní přepínač agendy. Pokud je broker vypnutý (0), po startu se ukončí a nic nepublikuje do MQTT." },
+            {"id": "mqtt_conn", "tab": "mqtt", "label": "Připojení k MQTT brokeru",
+              "tooltip": "Parametry pripojeni k MQTT brokeru (host, port, volitelne prihlaseni). Bez spravneho pripojeni broker nepublikuje stavy ani udalosti."},
+            {"id": "mqtt_topic", "tab": "mqtt", "label": "Topic pro publikaci dat",
+              "tooltip": "Základní namespace topicu. Base topic určuje, kam broker publikuje state/event."},
+            {"id": "device_main","tab": "mqtt",  "label": "Identita MQTT zařízení",
+            "tooltip": "Jak se RPi prezentuje v HA/MQTT (device info). DOPORUČENÍ: Shodné ID pro všechny služby na RPi3, aby šlo v HA o jedno zařízení"},
+            {"id": "modbus_rtu", "tab": "modbus", "label": "Parametry linky", 
+             "tooltip": "Nastaveni seriove Modbus RTU linky (port, baudrate, parita, stopbity, bytesize, timeout). Pri chybach zkontroluj port /dev/serial/by-id a parametry linky na IO modulech.",},
+            {"id": "poll_debounce", "tab": "modbus", "label": "Polling / debounce", 
+             "tooltip": "Rychlost dotazovani a odruseni vstupu. Poll interval urcuje pauzu mezi dotazy, debounce filtruje zakmit tlacitek/vypinacu. Prilis male hodnoty mohou zatezovat sbernici nebo delat falešne prechody.",},
+            {"id": "iomap_main", "tab": "iomap", "label": "Topologie / mapovani", 
+             "tooltip": "Definice slave adres a kanalu. Slaves + channels-per-slave urcuji topologii. Used channels omezi, ktere vstupy se vubec zpracovavaji. Buttons prepinaji vybrane kanaly do rezimu tlacitka (event).",},
+            {"id": "diag_mqtt", "tab": "diag", "label": "MQTT latency test",
+             "tooltip": "Nastaveni diagnostickeho testu latence MQTT (pocet vzorku, interval, timeout). Test meri publish -> broker -> receive v ramci stejneho klienta (loopback pres broker).",},
+            {"id": "diag_mqtt_thr", "tab": "diag", "label": "MQTT latency semafor",
+             "tooltip": "Prahy pro vyhodnoceni latence (OK/WARN) a topic prefix pro diagnostiku. UI pouzije oddeleny prefix, aby se nepletly produkcni topicy s diagnostikou.",},
+            {"id": "diag_modbus", "tab": "diag", "label": "Modbus RTT test",
+             "tooltip": "Nastaveni RTT testu sbernice Modbus (metoda, adresa, count, interval, prahy OK/WARN). Slouzi k overeni odezvy IO modulu a stability linky.",},
+            {"id": "ha_pub", "tab": "mqtt", "label": "Publikovaní entit do HA",
+             "tooltip": "Home Assistant MQTT Discovery. Zapnutim se generuji discovery entity pod prefixem (typicky homeassistant). Pokud mas discovery vypnute, entity si musis definovat rucne v HA.",},
+            {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)", "description": "Klice MODBUS_IO_* nalezene v .env, ktere nejsou explicitne v konfiguraci (read-only).",
+             "tooltip": "Automaticky detekovane klice MODBUS_IO_* z .env, ktere nemaji metadata. Zobrazuji se pouze pro prehled (read-only), aby se nic omylem neupravilo."},
             {"id": "log_main",    "tab": "logging", "label": "Logování",
             "tooltip": "Nastavení logu - úroveň"},
-
         ],
 
         "fields": [
             # -----------------
             # BASIC
             # -----------------
-            {
-                "key": "MODBUS_IO_ENABLED",
-                "label": "Enabled",
-                "tab": "basic",
-                "section": "basic_main",
-                "type": "select",
-                "choices": ["0", "1"],
-                "required": True,
-                "help": "1 = zapnuto, 0 = vypnuto",
-                "tooltip": "1 = broker aktivni, 0 = broker se po startu ukonci (vypnuto).",
-            },
+            {"key": "MODBUS_IO_ENABLED", "label": "Enabled", "tab": "basic", "section": "basic_main",
+             "type": "select", "choices": ["0", "1"], "required": True, "help": "1 = zapnuto, 0 = vypnuto",
+             "tooltip": "1 = broker aktivni, 0 = broker se po startu ukonci (vypnuto)."},
 
             # -----------------
             # MQTT
@@ -124,14 +85,30 @@ AGENDAS = {
             {"key": "MODBUS_IO_MQTT_PASSWORD", "label": "Password", "tab": "mqtt", "section": "mqtt_conn",
              "type": "secret", "required": False, "help": "Nech prazdne = heslo se nezmeni.",
              "tooltip": "Heslo pro MQTT."},
-
-            {"key": "MODBUS_IO_MQTT_CLIENT_ID", "label": "Client ID", "tab": "mqtt", "section": "mqtt_topic",
-             "type": "str", "required": False, "placeholder": "modbus-io-broker-rpi3",
+            {"key": "MODBUS_IO_MQTT_CLIENT_ID", "label": "Client ID", "tab": "mqtt", "section": "mqtt_conn",
+             "type": "str", "required": True, "placeholder": "modbus-io-rpi3",
              "tooltip": "Client ID pro MQTT (musi byt unikátni v ramci brokeru)."},
+            {"key": "MODBUS_IO_HA_DISCOVERY_PREFIX", "label": "Discovery prefix pro HA", "tab": "mqtt", "section": "mqtt_conn",
+             "type": "str", "required": True, "placeholder": "homeassistant",
+             "tooltip": "Prefix discovery topicu (typicky homeassistant)."},             
+
             {"key": "MODBUS_IO_MQTT_BASE_TOPIC", "label": "Base topic", "tab": "mqtt", "section": "mqtt_topic",
              "type": "str", "required": False, "placeholder": "modbus_io",
              "tooltip": "Base topic (napr. modbus_io). Broker publikuje do: base/state/* a base/event/*."},
-
+            # MQTT device
+            {"key": "MODBUS_IO_MQTT_DEVICE_ID", "label": "Device ID", "tab": "mqtt", "section": "device_main",
+            "type": "str", "required": True, "placeholder": "rpi-3b-broker",
+            "tooltip": "Identifikator zarizeni pro discovery (device id)."},
+            {"key": "MODBUS_IO_MQTT_DEVICE_NAME", "label": "Device name", "tab": "mqtt", "section": "device_main",
+            "type": "str", "required": True, "placeholder": "Raspberry 3B broker",
+            "tooltip": "Lidsky čitelný název zařízení."},
+            # MQTT publikování do HA
+            {"key": "MODBUS_IO_HA_DISCOVERY", "label": "HA discovery", "tab": "mqtt", "section": "ha_pub",
+             "type": "select", "choices": ["0", "1"], "required": True,
+             "tooltip": "1 = publikovat Home Assistant MQTT Discovery, 0 = nevytvaret discovery entity."},            
+            {"key": "MODBUS_IO_MQTT_ENTITY_PREFIX", "label": "Entity prefix", "tab": "mqtt", "section": "ha_pub",
+            "type": "str", "required": False, "placeholder": "rpi_broker_modbus_io",
+            "tooltip": "Prefix pro entity/senzory v HA (napr. rpi_broker_modbus_io...)."},
             # -----------------
             # LOGGING
             # -----------------
@@ -182,9 +159,6 @@ AGENDAS = {
             {"key": "MODBUS_IO_CHANNELS_PER_SLAVE", "label": "Channels per slave", "tab": "iomap", "section": "iomap_main",
              "type": "int", "required": True, "min": 1, "max": 64, "placeholder": "6",
              "tooltip": "Pocet vstupu na jednom IO modulu (u tebe 6)."},
-            {"key": "MODBUS_IO_NAME_PREFIX", "label": "Name prefix", "tab": "iomap", "section": "iomap_main",
-             "type": "str", "required": False, "placeholder": "modbus_io",
-             "tooltip": "Prefix nazvu signalu. Vysledne jmeno: prefix_slave_channel (napr. modbus_io_128_2)."},
             {"key": "MODBUS_IO_DEFAULT_TYPE", "label": "Default type", "tab": "iomap", "section": "iomap_main",
              "type": "select", "choices": ["switch", "button"], "required": True,
              "tooltip": "Vychozi typ vsech vstupu. Vyjimky definuj v MODBUS_IO_BUTTONS (nebo pozdeji MODBUS_IO_SWITCHES)."},
@@ -246,15 +220,6 @@ AGENDAS = {
              "type": "int", "required": True, "min": 0, "max": 60000, "placeholder": "150",
              "tooltip": "Limit pro spatne RTT (ms)."},
 
-            # -----------------
-            # HOME ASSISTANT
-            # -----------------
-            {"key": "MODBUS_IO_HA_DISCOVERY", "label": "HA discovery", "tab": "ha", "section": "ha_pub",
-             "type": "select", "choices": ["0", "1"], "required": True,
-             "tooltip": "1 = publikovat Home Assistant MQTT Discovery, 0 = nevytvaret discovery entity."},
-            {"key": "MODBUS_IO_HA_DISCOVERY_PREFIX", "label": "Discovery prefix", "tab": "ha", "section": "ha_pub",
-             "type": "str", "required": True, "placeholder": "homeassistant",
-             "tooltip": "Prefix discovery topicu (typicky homeassistant)."},
         ],
 
         "diagnostics": [
@@ -302,67 +267,85 @@ AGENDAS = {
             {"id": "mqtt",   "label": "MQTT"},
             {"id": "infigy", "label": "Infigy"},
             {"id": "auth",   "label": "Auth"},
-            {"id": "ha",     "label": "Home Assistant"},
             {"id": "timing", "label": "Timing"},
             {"id": "logging", "label": "Logging"},
+            {"id": "path", "label": "Cesty"},
             {"id": "other",  "label": "Ostatni"},
         ],
 
         "sections": [
-            {"id": "mqtt_conn", "tab": "mqtt", "label": "Pripojeni k brokeru",
+            {"id": "mqtt_conn", "tab": "mqtt", "label": "Připojení k MQTT brokeru",
             "tooltip": "Parametry pripojeni k MQTT brokeru (host/port/uzivatel/heslo)."},
-            {"id": "mqtt_ident", "tab": "mqtt", "label": "Topic / identita",
-            "tooltip": "Identita klienta a base topic pro publikovani."},
+            {"id": "mqtt_ident", "tab": "mqtt", "label": "Topic pro publikaci dat",
+            "tooltip": "Base topic pro publikovani dat."},
+            {"id": "device_main","tab": "mqtt",  "label": "Identita MQTT zařízení",
+            "tooltip": "Jak se RPi prezentuje v HA/MQTT (device info). DOPORUČENÍ: Shodné ID pro všechny služby na RPi3, aby šlo v HA o jedno zařízení"},
             {"id": "mqtt_reliability", "tab": "mqtt", "label": "Spolehlivost / watchdog",
             "tooltip": "Parametry watchdogu a reconnect backoffu."},
             {"id": "infigy_conn", "tab": "infigy", "label": "Pripojeni na Infigy",
             "tooltip": "Cilovy host a lokalni socket (pokud se pouziva)."},
             {"id": "auth_main", "tab": "auth", "label": "Autentizace",
             "tooltip": "Cookie/Bearer pro pristup. Pouzij jen jednu metodu, podle implementace sluzby."},
-            {"id": "ha_discovery", "tab": "ha", "label": "MQTT Discovery / identifikace",
-            "tooltip": "Prefix discovery a identifikace zarizeni/entity v HA."},
-            {"id": "meta", "tab": "ha", "label": "Metadata / cesty",
-            "tooltip": "Verze a cesty pro energy state (podle implementace sluzby)."},
             {"id": "timing_main", "tab": "timing", "label": "Casovani a heartbeat",
             "tooltip": "Intervaly publikovani, tick integratoru a heartbeat age."},
             {"id": "log_main",    "tab": "logging", "label": "Logování",
             "tooltip": "Nastavení logu - úroveň"},
             {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)",
-            "description": "Klice z .env, ktere nejsou explicitne v konfiguraci (read-only)."},
+            "description": "Automaticky detekované klíče INFIGY_* z .env, které nejsou explicitně v konfiguraci (read-only)."},
+            {"id": "ha_pub", "tab": "mqtt", "label": "Publikovaní entit do HA",
+             "tooltip": "Home Assistant MQTT Discovery.",},
+            {"id": "path_main", "tab": "path", "label": "Metadata / Cesty",
+            "tooltip": "Verze a cesty pro energy state (podle implementace služby)."},
+
         ],
 
         "fields": [
             # -----------------
             # MQTT / conn
             # -----------------
-            {"key": "MQTT_HOST", "label": "Host", "tab": "mqtt", "section": "mqtt_conn",
+            {"key": "INFIGY_MQTT_HOST", "label": "Host", "tab": "mqtt", "section": "mqtt_conn",
             "type": "str", "required": True, "placeholder": "192.168.1.20",
             "tooltip": "Hostname/IP MQTT brokeru (napr. 192.168.1.20 nebo core-mosquitto)."},
-            {"key": "MQTT_PORT", "label": "Port", "tab": "mqtt", "section": "mqtt_conn",
+            {"key": "INFIGY_MQTT_PORT", "label": "Port", "tab": "mqtt", "section": "mqtt_conn",
             "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "1883",
             "tooltip": "Port MQTT (obvykle 1883)."},
-            {"key": "MQTT_USER", "label": "Username", "tab": "mqtt", "section": "mqtt_conn",
+            {"key": "INFIGY_MQTT_USER", "label": "Username", "tab": "mqtt", "section": "mqtt_conn",
             "type": "str", "required": False,
             "tooltip": "Uzivatel pro MQTT (pokud broker vyzaduje)."},
-            {"key": "MQTT_PASS", "label": "Password", "tab": "mqtt", "section": "mqtt_conn",
+            {"key": "INFIGY_MQTT_PASS", "label": "Password", "tab": "mqtt", "section": "mqtt_conn",
             "type": "secret", "required": False,
             "tooltip": "Heslo pro MQTT (pokud broker vyzaduje)."},
+            {"key": "INFIGY_MQTT_CLIENT_ID", "label": "Client ID", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "str", "required": True, "placeholder": "infigy-rpi3",
+            "tooltip": "Client ID pro MQTT (musi byt unikátní v ramci brokeru)."},
+            {"key": "INFIGY_MQTT_DISCOVERY_PREFIX", "label": "Discovery prefix pro HA", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "str", "required": True, "placeholder": "homeassistant",
+            "tooltip": "Prefix pro HA MQTT Discovery (typicky homeassistant)."},            
 
             # MQTT identita / topic
-            {"key": "MQTT_BASE_INFIGY", "label": "Base topic", "tab": "mqtt", "section": "mqtt_ident",
+            {"key": "INFIGY_MQTT_BASE", "label": "Base topic", "tab": "mqtt", "section": "mqtt_ident",
             "type": "str", "required": True, "placeholder": "infigy",
-            "tooltip": "Zakladni topic pro publikovani dat (napr. infigy)."},
-            {"key": "CLIENT_ID_INFIGY", "label": "Client ID", "tab": "mqtt", "section": "mqtt_ident",
-            "type": "str", "required": True, "placeholder": "infigy-ws-to-mqtt",
-            "tooltip": "Client ID pro MQTT (musi byt unikAtni v ramci brokeru)."},
+            "tooltip": "Zakladni topic pro publikovani dat (např. infigy)."},
+
+            # MQTT device
+            {"key": "INFIGY_MQTT_DEVICE_ID", "label": "Device ID", "tab": "mqtt", "section": "device_main",
+            "type": "str", "required": True, "placeholder": "rpi-3b-broker",
+            "tooltip": "Identifikator zarizeni pro discovery (device id)."},
+            {"key": "INFIGY_MQTT_DEVICE_NAME", "label": "Device name", "tab": "mqtt", "section": "device_main",
+            "type": "str", "required": True, "placeholder": "Raspberry 3B broker",
+            "tooltip": "Lidsky čitelný název zařízení."},
 
             # MQTT reliability
-            {"key": "MQTT_WATCHDOG_INTERVAL_S", "label": "Watchdog interval (s)", "tab": "mqtt", "section": "mqtt_reliability",
+            {"key": "INFIGY_MQTT_WATCHDOG_INTERVAL_S", "label": "Watchdog interval (s)", "tab": "mqtt", "section": "mqtt_reliability",
             "type": "int", "required": False, "min": 1, "max": 3600, "placeholder": "30",
             "tooltip": "Jak casto sluzba kontroluje spojeni / publish (sekundy)."},
-            {"key": "MQTT_RECONNECT_BACKOFF_MAX_S", "label": "Reconnect backoff max (s)", "tab": "mqtt", "section": "mqtt_reliability",
+            {"key": "INFIGY_MQTT_RECONNECT_BACKOFF_MAX_S", "label": "Reconnect backoff max (s)", "tab": "mqtt", "section": "mqtt_reliability",
             "type": "int", "required": False, "min": 1, "max": 3600, "placeholder": "60",
             "tooltip": "Maximalni cekani pri opakovanych reconnect pokusech (sekundy)."},
+
+            {"key": "INFIGY_MQTT_ENTITY_PREFIX", "label": "Entity prefix", "tab": "mqtt", "section": "ha_pub",
+            "type": "str", "required": False, "placeholder": "rpi_broker_infigy",
+            "tooltip": "Prefix pro entity/senzory v HA (napr. rpi_broker_infigy...)."},
 
             # -----------------
             # INFIGY
@@ -370,48 +353,35 @@ AGENDAS = {
             {"key": "INFIGY_HOST", "label": "Infigy host", "tab": "infigy", "section": "infigy_conn",
             "type": "str", "required": True, "placeholder": "10.10.100.10",
             "tooltip": "Hostname/IP Infigy endpointu (dle implementace sluzby)."},
-            {"key": "SOCKET_PATH", "label": "Socket path", "tab": "infigy", "section": "infigy_conn",
+            {"key": "INFIGY_SOCKET_PATH", "label": "Socket path", "tab": "infigy", "section": "infigy_conn",
             "type": "str", "required": False, "placeholder": "/run/infigy.sock",
             "tooltip": "Cesta k UNIX socketu, pokud se pouziva misto TCP."},
 
             # -----------------
             # AUTH
             # -----------------
-            {"key": "AUTH_COOKIE", "label": "Auth cookie", "tab": "auth", "section": "auth_main",
+            {"key": "INFIGY_AUTH_COOKIE", "label": "Auth cookie", "tab": "auth", "section": "auth_main",
             "type": "secret", "required": False,
             "tooltip": "Cookie pro autentizaci (pokud sluzba pouziva cookie auth)."},
-            {"key": "AUTH_BEARER", "label": "Auth bearer", "tab": "auth", "section": "auth_main",
+            {"key": "INFIGY_AUTH_BEARER", "label": "Auth bearer", "tab": "auth", "section": "auth_main",
             "type": "secret", "required": False,
             "tooltip": "Bearer token pro autentizaci (pokud sluzba pouziva token auth)."},
 
-            # -----------------
-            # HOME ASSISTANT / discovery
-            # -----------------
-            {"key": "DISCOVERY_PREFIX", "label": "Discovery prefix", "tab": "ha", "section": "ha_discovery",
-            "type": "str", "required": True, "placeholder": "homeassistant",
-            "tooltip": "Prefix pro HA MQTT Discovery (typicky homeassistant)."},
-            {"key": "DEVICE_ID", "label": "Device ID", "tab": "ha", "section": "ha_discovery",
-            "type": "str", "required": True, "placeholder": "infigy_gateway",
-            "tooltip": "Identifikator zarizeni pro discovery (device id)."},
-            {"key": "ENTITY_PREFIX", "label": "Entity prefix", "tab": "ha", "section": "ha_discovery",
-            "type": "str", "required": False, "placeholder": "infigy",
-            "tooltip": "Prefix pro entity/senzory v HA (napr. infigy_...)."},
-
             # Metadata / paths
-            {"key": "ENERGY_STATE_PATH", "label": "Energy state path", "tab": "ha", "section": "meta",
+            {"key": "INFIGY_ENERGY_STATE_PATH", "label": "Energy state path", "tab": "path", "section": "path_main",
             "type": "str", "required": False, "placeholder": "/energy/state",
             "tooltip": "Cesta/endpoint pro zdroj energy state (dle implementace sluzby)."},
 
             # -----------------
             # TIMING
             # -----------------
-            {"key": "ENERGY_PUBLISH_INTERVAL_S", "label": "Publish interval (s)", "tab": "timing", "section": "timing_main",
+            {"key": "INFIGY_ENERGY_PUBLISH_INTERVAL_S", "label": "Publish interval (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "5",
             "tooltip": "Jak casto publikovat energy hodnoty do MQTT (sekundy)."},
-            {"key": "INTEGRATOR_TICK_S", "label": "Integrator tick (s)", "tab": "timing", "section": "timing_main",
+            {"key": "INFIGY_INTEGRATOR_TICK_S", "label": "Integrator tick (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "1",
             "tooltip": "Krok integratoru (sekundy)."},
-            {"key": "HEARTBEAT_MAX_AGE_S", "label": "Heartbeat max age (s)", "tab": "timing", "section": "timing_main",
+            {"key": "INFIGY_HEARTBEAT_MAX_AGE_S", "label": "Heartbeat max age (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 86400, "placeholder": "30",
             "tooltip": "Maximalni stari heartbeat, po kterem se bere spojeni jako neaktualni (sekundy)."},
             # -----------------
@@ -432,14 +402,12 @@ AGENDAS = {
         "tabs": [
             {"id": "basic",   "label": "Basic"},
             {"id": "socket",  "label": "Socket"},
-            {"id": "logging", "label": "Logging"},
             {"id": "proto",   "label": "Protocol"},
+            {"id": "logging", "label": "Logging"},
+            {"id": "other",  "label": "Ostatní"},
         ],
 
         "sections": [
-            {"id": "basic_main",  "tab": "basic",   "label": "Obecne",
-            "tooltip": "Zakladni prepinace a spolecna nastaveni sluzby."},
-
             {"id": "listen_main", "tab": "basic",  "label": "Naslouchani (server)",
             "tooltip": "Kde proxy nasloucha pro prichozi Modbus TCP klienty."},
 
@@ -449,102 +417,101 @@ AGENDAS = {
             {"id": "socket_main", "tab": "socket",  "label": "Socket / buffery",
             "tooltip": "Timeouty a velikosti bufferu. Ovlivnuje stabilitu a latenci."},
 
-            {"id": "log_main",    "tab": "logging", "label": "Logovani komunikace Modbus",
-            "tooltip": "Kam a jak se zapisuje log (soubor, uroven, rotace)."},
-            {"id": "log_debug",   "tab": "logging", "label": "Debug / statistiky",
-            "tooltip": "Volitelne debug vypisy (hexdump, sample) a periodicke statistiky."},
+            {"id": "log_main",    "tab": "logging", "label": "Logovani komunikace Modbus do souboru",
+            "tooltip": "Kam a jak se zapisuje log (soubor, uroven)."},
+            {"id": "log_debug",   "tab": "logging", "label": "Logování",
+            "tooltip": "Nastavení úrovně logování služby a periodicke statistiky."},
 
             {"id": "proto_tid",   "tab": "proto",   "label": "TID/UID pravidla",
             "tooltip": "Chovani pro transaction-id (TID) a jednotkove ID (UID)."},
             {"id": "proto_stray", "tab": "proto",   "label": "Stray / neocekavane ramce",
             "tooltip": "Co delat s neocekavanymi odpovedmi a zbytky provozu (stray)."},
+
+            {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)",
+            "description": "Automaticky detekované klíče MODBUS_PROXY_* nalezene v .env, které nejsou explicitně v konfiguraci (read-only)."},
         ],
 
         "fields": [
             # -----------------
             # LISTEN
             # -----------------
-            {"key": "LISTEN_IP", "label": "Listen IP", "tab": "basic", "section": "listen_main",
+            {"key": "MODBUS_PROXY_LISTEN_IP", "label": "Listen IP", "tab": "basic", "section": "listen_main",
             "type": "str", "required": True, "placeholder": "0.0.0.0",
             "tooltip": "IP adresa, na ktere proxy nasloucha. 0.0.0.0 = vsechny rozhrani."},
 
-            {"key": "LISTEN_PORT", "label": "Listen port", "tab": "basic", "section": "listen_main",
+            {"key": "MODBUS_PROXY_LISTEN_PORT", "label": "Listen port", "tab": "basic", "section": "listen_main",
             "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "1502",
             "tooltip": "Port pro prichozi spojeni. 502 je standard, ale vyzaduje root; doporuceni 1502."},
 
             # -----------------
             # TARGET
             # -----------------
-            {"key": "PROXY_TARGET_IP", "label": "Target IP", "tab": "basic", "section": "target_main",
+            {"key": "MODBUS_PROXY_TARGET_IP", "label": "Target IP", "tab": "basic", "section": "target_main",
             "type": "str", "required": True, "placeholder": "10.10.100.253",
             "tooltip": "IP ciloveho Modbus TCP serveru/zarizeni, kam se provoz preposila."},
 
-            {"key": "PROXY_TARGET_PORT", "label": "Target port", "tab": "basic", "section": "target_main",
+            {"key": "MODBUS_PROXY_TARGET_PORT", "label": "Target port", "tab": "basic", "section": "target_main",
             "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "502",
             "tooltip": "Port ciloveho Modbus TCP serveru (typicky 502)."},
             
             # -----------------
             # SOCKET
             # -----------------
-            {"key": "BUFFER_SIZE", "label": "Buffer size", "tab": "socket", "section": "socket_main",
+            {"key": "MODBUS_PROXY_BUFFER_SIZE", "label": "Buffer size", "tab": "socket", "section": "socket_main",
             "type": "int", "required": True, "min": 256, "max": 1048576, "placeholder": "4096",
             "tooltip": "Velikost socket bufferu (bytes). Typicky 4096 nebo 8192."},
 
-            {"key": "SOCK_TIMEOUT_S", "label": "Socket timeout (s)", "tab": "socket", "section": "socket_main",
+            {"key": "MODBUS_PROXY_SOCK_TIMEOUT_S", "label": "Socket timeout (s)", "tab": "socket", "section": "socket_main",
             "type": "float", "required": True, "min": 0.1, "max": 120.0, "placeholder": "5.0",
             "tooltip": "Timeout pro socket operace (sekundy). Prilis nizko = chyby, prilis vysoko = dlouhe cekani."},
 
             # -----------------
             # LOGGING
             # -----------------
-            {"key": "LOG_FILE", "label": "Log file", "tab": "logging", "section": "log_main",
+            {"key": "MODBUS_PROXY_LOG_FILE_PKT", "label": "Log file", "tab": "logging", "section": "log_main",
             "type": "str", "required": False, "placeholder": "/var/log/modbus_tcp_proxy.log",
             "tooltip": "Cesta k log souboru. Nech prazdne = log do stdout (dle implementace sluzby)."},
 
-            {"key": "LOG_LEVEL", "label": "Log level", "tab": "logging", "section": "log_main",
+            {"key": "MODBUS_PROXY_LOG_LEVEL_PKT", "label": "Log level MODBUS", "tab": "logging", "section": "log_main",
             "type": "select", "choices": ["DEBUG", "INFO", "WARNING", "ERROR"], "required": True,
-            "tooltip": "Uroven logu. INFO pro bezny provoz, DEBUG pri ladeni."},
+            "tooltip": "Uroven logu. INFO nezapisuje do souboru, DEBUG zapisuje."},
 
-            {"key": "LOG_MAX_BYTES", "label": "Max bytes", "tab": "logging", "section": "log_main",
-            "type": "int", "required": True, "min": 0, "max": 2147483647, "placeholder": "1048576",
-            "tooltip": "Max velikost log souboru pred rotaci (bytes). 0 = bez rotace (pokud sluzba podporuje)."},
-
-            {"key": "LOG_BACKUP_COUNT", "label": "Backup count", "tab": "logging", "section": "log_main",
-            "type": "int", "required": True, "min": 0, "max": 100, "placeholder": "3",
-            "tooltip": "Kolik rotovanych log souboru drzet (0 = zadne zalohy)."},
-            
-            {"key": "LOG_HEXDUMP", "label": "Hexdump", "tab": "logging", "section": "log_debug",
+            {"key": "MODBUS_PROXY_LOG_HEXDUMP_PKT", "label": "Hexdump", "tab": "logging", "section": "log_main",
             "type": "select", "choices": ["0", "1"], "required": True,
             "tooltip": "1 = loguje hexdump ramcu (velmi ukecane). Pouzivej jen docasne. V logu jsou konkrétní povely MODBUS"},
 
-            {"key": "LOG_SAMPLE_BYTES", "label": "Sample bytes", "tab": "logging", "section": "log_debug",
+            {"key": "MODBUS_PROXY_LOG_SAMPLE_BYTES_PKT", "label": "Sample bytes", "tab": "logging", "section": "log_main",
             "type": "int", "required": True, "min": 0, "max": 65535, "placeholder": "128",
             "tooltip": "Kolik prvnich bytu logovat pri sample/hexdump (0 = vypnuto / dle implementace)."},
             
-            {"key": "LOG_STATS_INTERVAL", "label": "Stats interval", "tab": "logging", "section": "log_debug",
+            {"key": "MODBUS_PROXY_LOG_LEVEL", "label": "Log level proxy", "tab": "logging", "section": "log_debug",
+            "type": "select", "choices": ["DEBUG", "INFO", "WARNING", "ERROR"], "required": True,
+            "tooltip": "Uroven logu. INFO pro bezny provoz, DEBUG pri ladeni."},
+
+            {"key": "MODBUS_PROXY_LOG_STATS_INTERVAL", "label": "Stats interval", "tab": "logging", "section": "log_debug",
             "type": "int", "required": True, "min": 0, "max": 86400, "placeholder": "60",
-            "tooltip": "Interval periodickych statistik v sekundach (0 = vypnuto)."},
+            "tooltip": "Interval periodickych statistik v logu v sekundach (0 = vypnuto)."},
+
+            {"key": "MODBUS_PROXY_DROP_STRAY_SILENT", "label": "Drop stray silent", "tab": "logging", "section": "log_debug",
+            "type": "select", "choices": ["0", "1"], "required": True,
+            "tooltip": "1 = neloguje neocekavane odpovedi/ramce, 0 = loguje neočekávané odpovědi (v DEBUG)"},
             
             # -----------------
             # PROTOCOL: stray + TID/UID
             # -----------------
-            {"key": "DROP_STRAY_SILENT", "label": "Drop stray silent", "tab": "proto", "section": "proto_stray",
+            {"key": "MODBUS_PROXY_PASS_STRAY", "label": "Pass stray", "tab": "proto", "section": "proto_stray",
             "type": "select", "choices": ["0", "1"], "required": True,
-            "tooltip": "1 = tise zahodi neocekavane odpovedi/ramce, 0 = loguje/propousti dle PASS_STRAY."},
-
-            {"key": "PASS_STRAY", "label": "Pass stray", "tab": "proto", "section": "proto_stray",
-            "type": "select", "choices": ["0", "1"], "required": True,
-            "tooltip": "1 = pokusi se propustit stray ramce dal. Bezpecnejsi je 0 (podle implementace)."},
+            "tooltip": "1 = pokusí se propustit stray rámce a přepošle je dál. Bezpečnější je 0 (podle implementace)."},
             
-            {"key": "TID_REWRITE", "label": "TID rewrite", "tab": "proto", "section": "proto_tid",
+            {"key": "MODBUS_PROXY_TID_REWRITE", "label": "TID rewrite", "tab": "proto", "section": "proto_tid",
             "type": "select", "choices": ["0", "1"], "required": True,
             "tooltip": "1 = proxy muze prepisovat Transaction-ID (TID) kvuli konzistenci mezi klienty. (Doporučeno zapnout, pokud vidíš četné stray_response / out_of_order)"},
 
-            {"key": "TID_STRICT", "label": "TID strict", "tab": "proto", "section": "proto_tid",
+            {"key": "MODBUS_PROXY_TID_STRICT", "label": "TID strict", "tab": "proto", "section": "proto_tid",
             "type": "select", "choices": ["0", "1"], "required": True,
             "tooltip": "1 = striktni kontrola TID (nesedi-li, bere se jako chyba/stray). 0 = benevoletní"},
             
-            {"key": "STRICT_UID", "label": "Strict UID", "tab": "proto", "section": "proto_tid",
+            {"key": "MODBUS_PROXY_STRICT_UID", "label": "Strict UID", "tab": "proto", "section": "proto_tid",
             "type": "select", "choices": ["0", "1"], "required": True,
             "tooltip": "1 = striktni kontrola Unit-ID (UID). U nekterych zarizeni muze byt problem. Zapni, pokud zařízení posílá odpovědi s divným UID"},
         ],
@@ -558,120 +525,136 @@ AGENDAS = {
         "auto_prefix": "MQTT_REPORT_",   # jen formalne; klice jsou bez prefixu (zatim)
 
         "tabs": [
-            {"id": "mqtt",     "label": "MQTT"},
+            {"id": "basic",  "label": "Basic"},
             {"id": "targets",  "label": "Targets"},
+            {"id": "mqtt",     "label": "MQTT"},
             {"id": "timing",   "label": "Intervals"},
             {"id": "logging", "label": "Logging"},
-            {"id": "device",   "label": "Device"},
+            {"id": "other",  "label": "Ostatní"},
         ],
 
         "sections": [
+            {"id": "basic_main", "tab": "basic", "label": "Obecné", 
+             "tooltip": "Zakladní přepínač agendy. Pokud je reporter vypnutý (0), po startu se ukončí a nic nepublikuje do MQTT." },
+
             {"id": "mqtt_conn",  "tab": "mqtt",    "label": "Připojení k MQTT brokeru",
             "tooltip": "Nastavení přístupu na MQTT broker a klientskou identitu."},
 
-            {"id": "mqtt_topic", "tab": "mqtt",    "label": "Topic / identita",
-            "tooltip": "Base topic a Client ID, pod kterým se služba připojuje a publikuje."},
+            {"id": "mqtt_topic", "tab": "mqtt",    "label": "Topic pro publikaci dat",
+            "tooltip": "Base topic, pod kterým služba publikuje data."},
 
-            {"id": "targets_main","tab": "targets","label": "Cílové systémy",
+            {"id": "targets_main","tab": "targets","label": "Reportované systémy",
             "tooltip": "Hosty a porty pro diagnostiku (inverter, HA ping, proxy unit)."},
             
             {"id": "timing_main","tab": "timing",  "label": "Časování a watchdog",
             "tooltip": "Polling intervaly a heartbeat. Ovlivnuje zátěž i citlivost hlídaní."},
 
-            {"id": "device_main","tab": "device",  "label": "Identita MQTT zařízení",
-            "tooltip": "Jak se RPi prezentuje v HA/MQTT (device info)."},
+            {"id": "device_main","tab": "mqtt",  "label": "Identita MQTT zařízení",
+            "tooltip": "Jak se RPi prezentuje v HA/MQTT (device info). DOPORUČENÍ: Shodné ID pro všechny služby na RPi3, aby šlo v HA o jedno zařízení"},
 
             {"id": "log_main", "tab": "logging", "label": "Logování",
             "tooltip": "Nastavení logu - úroveň"},
+            
+            {"id": "ha_pub", "tab": "mqtt", "label": "Publikovaní entit do HA",
+             "tooltip": "Home Assistant MQTT Discovery.",},            
+
+            {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)",
+            "description": "Automaticky detekované klíče MQTT_REPORT_* nalezene v .env, které nejsou explicitně v konfiguraci (read-only)."},            
         ],
 
         "fields": [
             # -----------------
-            # MQTT - connection
+            # BASIC
             # -----------------
-            {"key": "MQTT_HOST", "label": "MQTT host", "tab": "mqtt", "section": "mqtt_conn",
-            "type": "str", "required": True, "placeholder": "localhost",
-            "tooltip": "Hostname/IP MQTT brokeru (napr. 192.168.1.20 nebo core-mosquitto)."},
-            {"key": "MQTT_PORT", "label": "MQTT port", "tab": "mqtt", "section": "mqtt_conn",
-            "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "1883",
-            "tooltip": "Port MQTT (obvykle 1883)."},
-            {"key": "MQTT_USER", "label": "MQTT user", "tab": "mqtt", "section": "mqtt_conn",
-            "type": "str", "required": False, "placeholder": "",
-            "tooltip": "Uzivatel pro MQTT (pokud broker vyzaduje autentizaci)."},
-            {"key": "MQTT_PASS", "label": "MQTT pass", "tab": "mqtt", "section": "mqtt_conn",
-            "type": "secret", "required": False, "help": "Nech prazdne = heslo se nezmeni (pokud to sluzba podporuje).",
-            "tooltip": "Heslo pro MQTT."},
+            {"key": "MQTT_REPORT_ENABLED", "label": "Enabled", "tab": "basic", "section": "basic_main",
+             "type": "select", "choices": ["0", "1"], "required": True, "help": "1 = zapnuto, 0 = vypnuto",
+             "tooltip": "1 = reporter aktivní, 0 = reporter se po startu ukončí (vypnuto)."},
 
             # -----------------
-            # MQTT - topic / identity
+            # MQTT - connection
             # -----------------
-            {"key": "MQTT_BASE_RPI", "label": "MQTT base", "tab": "mqtt", "section": "mqtt_topic",
-            "type": "str", "required": True, "placeholder": "rpi-bridge",
-            "tooltip": "Base topic pro publikovani (napr. rpi-bridge)."},
-            {"key": "CLIENT_ID_RPI", "label": "Client ID", "tab": "mqtt", "section": "mqtt_topic",
-            "type": "str", "required": True, "placeholder": "rpi-monitor",
+            {"key": "MQTT_REPORT_HOST", "label": "MQTT host", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "str", "required": True, "placeholder": "localhost",
+            "tooltip": "Hostname/IP MQTT brokeru (napr. 192.168.1.20 nebo core-mosquitto)."},
+            {"key": "MQTT_REPORT_PORT", "label": "MQTT port", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "1883",
+            "tooltip": "Port MQTT (obvykle 1883)."},
+            {"key": "MQTT_REPORT_USER", "label": "MQTT user", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "str", "required": False, "placeholder": "",
+            "tooltip": "Uzivatel pro MQTT (pokud broker vyzaduje autentizaci)."},
+            {"key": "MQTT_REPORT_PASS", "label": "MQTT pass", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "secret", "required": False, "help": "Nech prazdne = heslo se nezmeni (pokud to sluzba podporuje).",
+            "tooltip": "Heslo pro MQTT."},
+            {"key": "MQTT_REPORT_CLIENT_ID", "label": "Client ID", "tab": "mqtt", "section": "mqtt_conn",
+            "type": "str", "required": True, "placeholder": "rpi-report",
             "tooltip": "MQTT Client ID (musi byt unikAtni v ramci brokeru)."},
-            {"key": "MQTT_RECONNECT_BACKOFF_MAX_S", "label": "Reconnect backoff max (s)", "tab": "mqtt", "section": "mqtt_topic",
-            "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "60",
-            "tooltip": "Maximalni prodleva reconnectu pri vypadku (sekundy)."},
-            {"key": "DISCOVERY_PREFIX", "label": "Discovery prefix", "tab": "mqtt", "section": "mqtt_topic",
+            {"key": "MQTT_REPORT_DISCOVERY_PREFIX", "label": "Discovery prefix pro HA", "tab": "mqtt", "section": "mqtt_conn",
             "type": "str", "required": True, "placeholder": "homeassistant",
             "tooltip": "Prefix pro Home Assistant MQTT Discovery (typicky homeassistant)."},
 
             # -----------------
+            # MQTT - topic / identity
+            # -----------------
+            {"key": "MQTT_REPORT_BASE_TOPIC", "label": "Base topic", "tab": "mqtt", "section": "mqtt_topic",
+            "type": "str", "required": True, "placeholder": "rpi_report",
+            "tooltip": "Base topic pro publikovani (napr. rpi-bridge)."},
+            {"key": "MQTT_REPORT_RECONNECT_BACKOFF_MAX_S", "label": "Reconnect backoff max (s)", "tab": "mqtt", "section": "mqtt_topic",
+            "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "60",
+            "tooltip": "Maximalni prodleva reconnectu pri vypadku (sekundy)."},
+
+
+            # -----------------
+            # MQTT DEVICE identity
+            # -----------------
+            {"key": "MQTT_REPORT_DEVICE_ID", "label": "Device ID", "tab": "mqtt", "section": "device_main",
+            "type": "str", "required": True, "placeholder": "rpi-3b-broker",
+            "tooltip": "Jednoznacny identifikator zarizeni (napr. pro HA device)."},
+            {"key": "MQTT_REPORT_DEVICE_NAME", "label": "Device name", "tab": "mqtt", "section": "device_main",
+            "type": "str", "required": True, "placeholder": "Raspberry 3B broker",
+            "tooltip": "Lidsky čitelný název zařízení."},
+
+            {"key": "MQTT_REPORT_ENTITY_PREFIX", "label": "Entity prefix", "tab": "mqtt", "section": "ha_pub",
+            "type": "str", "required": False, "placeholder": "rpi_broker",
+            "tooltip": "Prefix pro entity/senzory v HA (např. rpi_broker...)."},            
+
+            # -----------------
             # TARGETS
             # -----------------
-            {"key": "INVERTER_HOST", "label": "Inverter host", "tab": "targets", "section": "targets_main",
+            {"key": "MQTT_REPORT_INVERTER_HOST", "label": "Inverter host", "tab": "targets", "section": "targets_main",
             "type": "str", "required": True, "placeholder": "10.10.100.253",
             "tooltip": "IP/hostname menice (nebo proxy) pro diagnostiku a stav."},
-            {"key": "INVERTER_PORT", "label": "Inverter port", "tab": "targets", "section": "targets_main",
+            {"key": "MQTT_REPORT_INVERTER_PORT", "label": "Inverter port", "tab": "targets", "section": "targets_main",
             "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "502",
             "tooltip": "Port inverteru (typicky 502 pro Modbus TCP)."},
-            {"key": "PING_HA_HOST", "label": "Ping HA host", "tab": "targets", "section": "targets_main",
+            {"key": "MQTT_REPORT_PING_HA_HOST", "label": "Ping HA host", "tab": "targets", "section": "targets_main",
             "type": "str", "required": True, "placeholder": "192.168.1.20",
             "tooltip": "Cil pro ping kontroly Home Assistantu."},
-            {"key": "PING_INVERTER_HOST", "label": "Ping inverter host", "tab": "targets", "section": "targets_main",
+            {"key": "MQTT_REPORT_PING_INVERTER_HOST", "label": "Ping inverter host", "tab": "targets", "section": "targets_main",
             "type": "str", "required": False, "placeholder": "10.10.100.253",
             "tooltip": "Cil pro ping kontroly inverteru. Nech prazdne = pouzije se INVERTER_HOST."},
-            {"key": "PROXY_SYSTEMD_UNIT", "label": "Proxy systemd unit", "tab": "targets", "section": "targets_main",
+            {"key": "MQTT_REPORT_PROXY_SYSTEMD_UNIT", "label": "Proxy systemd unit", "tab": "targets", "section": "targets_main",
             "type": "str", "required": True, "placeholder": "modbus_tcp_proxy.service",
             "tooltip": "Nazev systemd unit, kterou ma report kontrolovat (status/health)."},
             
             # -----------------
             # TIMING / WATCHDOG
             # -----------------
-            {"key": "POLL_SYS_S", "label": "Poll sys (s)", "tab": "timing", "section": "timing_main",
+            {"key": "MQTT_REPORT_POLL_SYS_S", "label": "Poll sys (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "10",
             "tooltip": "Interval dotazovani systemovych metrik (CPU/RAM/disk) v sekundach."},
-            {"key": "POLL_NET_S", "label": "Poll net (s)", "tab": "timing", "section": "timing_main",
+            {"key": "MQTT_REPORT_POLL_NET_S", "label": "Poll net (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "10",
             "tooltip": "Interval site (ping/latence) v sekundach."},
-            {"key": "POLL_PROXY_S", "label": "Poll proxy (s)", "tab": "timing", "section": "timing_main",
+            {"key": "MQTT_REPORT_POLL_PROXY_S", "label": "Poll proxy (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "10",
             "tooltip": "Interval kontroly proxy sluzby (systemd status) v sekundach."},
-            {"key": "HEARTBEAT_S", "label": "Heartbeat (s)", "tab": "timing", "section": "timing_main",
+            {"key": "MQTT_REPORT_HEARTBEAT_S", "label": "Heartbeat (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "5",
             "tooltip": "Jak casto se publikuje heartbeat do MQTT (sekundy)."},
-            {"key": "MAX_AGE_OK_S", "label": "Max age OK (s)", "tab": "timing", "section": "timing_main",
+            {"key": "MQTT_REPORT_MAX_AGE_OK_S", "label": "Max age OK (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 86400, "placeholder": "60",
             "tooltip": "Maximalni stari dat, kdy je stav jeste povazovan za OK (sekundy)."},
             
-            # -----------------
-            # DEVICE identity
-            # -----------------
-            {"key": "DEVICE_ID", "label": "Device ID", "tab": "device", "section": "device_main",
-            "type": "str", "required": True, "placeholder": "RPi-Monitor",
-            "tooltip": "Jednoznacny identifikator zarizeni (napr. pro HA device)."},
-            {"key": "DEVICE_NAME", "label": "Device name", "tab": "device", "section": "device_main",
-            "type": "str", "required": True, "placeholder": "RPi Monitor",
-            "tooltip": "Lidsky citelny nazev zarizeni."},
-            {"key": "DEVICE_MODEL", "label": "Device model", "tab": "device", "section": "device_main",
-            "type": "str", "required": True, "placeholder": "RPi Bridge Utils",
-            "tooltip": "Model / typ zarizeni pro identitu v HA."},
-            {"key": "DEVICE_MF", "label": "Manufacturer", "tab": "device", "section": "device_main",
-            "type": "str", "required": True, "placeholder": "RPi",
-            "tooltip": "Vyrobce zarizeni."},
-
             # -----------------
             # LOGGING
             # -----------------
@@ -691,8 +674,10 @@ AGENDAS = {
 
         "tabs": [
             {"id": "web",    "label": "Web"},
-            {"id": "auth",   "label": "Prihlaseni"},
-            {"id": "other",  "label": "Ostatni"},
+            {"id": "auth",   "label": "Přihlášení"},
+            {"id": "sys",   "label": "Systém"},
+            {"id": "logging", "label": "Logging"},
+            {"id": "other",  "label": "Ostatní"},
         ],
 
         "sections": [
@@ -702,22 +687,21 @@ AGENDAS = {
             {"id": "auth_main", "tab": "auth", "label": "Prihlaseni",
              "tooltip": "Prihlasovaci udaje a tajny klic pro session."},
 
-            {"id": "other_main", "tab": "other", "label": "Logovani",
-             "tooltip": "Soubor pro logy aplikace."},
+            {"id": "log_main", "tab": "logging", "label": "Logování",
+            "tooltip": "Nastavení logu - úroveň"},
 
-            {
-                "id": "other_auto",
-                "tab": "other",
-                "label": "Ostatni (detekovano)",
-                "description": "Klice UI_* nalezene v .env, ktere nejsou explicitne v konfiguraci (read-only).",
-            },
+            {"id": "sys_main", "tab": "sys", "label": "Systémové nastavení",
+            "tooltip": "Nastavení systémových adresářů RPi"},
+
+            {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)",
+            "description": "Automaticky detekované klíče UI_* nalezené v .env, které nejsou explicitně v konfiguraci (read-only)."},
         ],
 
         "fields": [
             # -----------------
             # WEB
             # -----------------
-            {"key": "PORT", "label": "Port", "tab": "web", "section": "web_main",
+            {"key": "UI_PORT", "label": "Port", "tab": "web", "section": "web_main",
              "type": "int", "required": True, "min": 1, "max": 65535, "placeholder": "8080",
              "tooltip": "TCP port, na kterem UI posloucha (napr. 8080)."},
 
@@ -738,13 +722,164 @@ AGENDAS = {
              "tooltip": "Tajny klic pro session/cookies. Zmenou se odhlasi vsichni uzivatele. (min. 16 znaků)"},
 
             # -----------------
+            # SYS
+            # -----------------
+            {"key": "UI_SUDO", "label": "SUDO", "tab": "sys", "section": "sys_main",
+             "type": "str", "required": True, "placeholder": "/usr/bin/sudo",
+             "tooltip": "Adresář SUDO na RPi."},
+
+            {"key": "UI_SYSTEMCTL", "label": "SYSTEMCTL", "tab": "sys", "section": "sys_main",
+             "type": "str", "required": True, "placeholder": "/bin/systemctl",
+             "tooltip": "Adresář SYSTEMCTL na RPi."},
+
+            # -----------------
             # LOG
             # -----------------
-            {"key": "LOG_FILE", "label": "Log file", "tab": "other", "section": "other_main",
-             "type": "str", "required": False, "placeholder": "/var/log/rpi-admin-ui.log",
-             "tooltip": "Cesta k souboru logu. Pokud neni zadano, loguje se typicky do journalctl."},
+            {"key": "UI_LOG_LEVEL", "label": "Log level", "tab": "logging", "section": "log_main",
+            "type": "select", "choices": ["DEBUG", "INFO", "WARNING", "ERROR"], "required": True,
+            "tooltip": "Uroven logu. INFO pro bezny provoz, DEBUG pri ladeni."},
         ],
 
+    },
+
+    "ha-watchdog": {
+        "title": "HA Watchdog",
+        "description": "Hlídání dostupnosti Home Assistant (HA OS) z RPi + volitelná notifikace (Telegram) + publikace do MQTT.",
+        "env_path": "/opt/rpi-admin-ui/.env",
+        "service_id": "ha-watchdog",  
+        "auto_prefix": "HA_WD_",
+
+        "tabs": [
+            {"id": "basic",    "label": "Basic"},
+            {"id": "targets",  "label": "Targets"},
+            {"id": "telegram", "label": "Telegram"},
+            {"id": "timing",   "label": "Cooldowns / Timing"},
+            {"id": "logging",  "label": "Logging"},
+            {"id": "other",    "label": "Ostatní"},
+        ],
+
+        "sections": [
+            {"id": "basic_main", "tab": "basic", "label": "Obecné",
+             "tooltip": "Zapnutí/vypnutí watchdogu. Pokud je vypnutý (0), po startu se ukončí a nic nedělá."},
+
+            {"id": "targets_main", "tab": "targets", "label": "Home Assistant SSH (target)",
+             "tooltip": "Kam watchdog kontroluje dostupnost HA a jakým způsobem."},
+
+            {"id": "tg_main", "tab": "telegram", "label": "Telegram notifikace",
+             "tooltip": "Volitelná notifikace na Telegram, když HA nejede / obnoví se."},
+
+            {"id": "timing_main", "tab": "timing", "label": "Časování",
+             "tooltip": "Interval kontroly a retry/backoff. Ovlivňuje rychlost detekce i zátěž."},
+
+            {"id": "log_main", "tab": "logging", "label": "Logování",
+             "tooltip": "Nastavení logu - úroveň."},
+
+            {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)",
+             "description": "Automaticky detekované klíče HA_WD_* z .env, které nejsou explicitně v konfiguraci (read-only)."},
+        ],
+
+        "fields": [
+            # -----------------
+            # BASIC
+            # -----------------
+            {"key": "HA_WD_ENABLED", "label": "Enabled", "tab": "basic", "section": "basic_main",
+            "type": "select", "choices": ["0", "1"], "required": True, "placeholder": "1",
+            "tooltip": "1 = watchdog aktivní, 0 = watchdog se po startu ukončí (vypnuto)."},
+
+            # -----------------
+            # TARGETS (HA)
+            # -----------------
+            {"key": "HA_WD_HA_HOST", "label": "HA host", "tab": "targets", "section": "targets_main",
+            "type": "str", "required": True, "placeholder": "192.168.1.20",
+            "tooltip": "IP/hostname Home Assistant (HA OS). Používá se pro TCP test (port 8123) i pro SSH."},
+
+            {"key": "HA_WD_POLL_S", "label": "Poll interval (s)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "10",
+            "tooltip": "Jak často kontrolovat dostupnost HA (sekundy)."},
+
+
+            {"key": "HA_WD_FAIL_COUNT", "label": "Fail count (DOWN threshold)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 1, "max": 999, "placeholder": "6",
+            "tooltip": "Kolik po sobě jdoucích neúspěchů je potřeba pro přechod do stavu DOWN."},
+
+            {"key": "HA_WD_RECOVER_COUNT", "label": "Recover count (UP threshold)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 1, "max": 999, "placeholder": "2",
+            "tooltip": "Kolik po sobě jdoucích úspěchů je potřeba pro přechod do stavu UP."},
+
+            # -----------------
+            # SSH HA
+            # -----------------
+            {"key": "HA_WD_SSH_USER", "label": "HA SSH user", "tab": "targets", "section": "targets_main",
+            "type": "str", "required": False, "placeholder": "root",
+            "tooltip": "Uživatel pro SSH na HA OS (typicky root)."},
+
+
+            {"key": "HA_WD_SSH_PORT", "label": "HA SSH port", "tab": "targets", "section": "targets_main",
+            "type": "int", "required": False, "min": 1, "max": 65535, "placeholder": "22",
+            "tooltip": "SSH port HA OS (typicky 22)."},
+
+
+            {"key": "HA_WD_SSH_CONNECT_TIMEOUT_S", "label": "SSH connect timeout (s)",
+            "tab": "targets", "section": "targets_main",
+            "type": "int", "required": True, "min": 1, "max": 60, "placeholder": "5",
+            "tooltip": "Maximální doba (v sekundách) pro navázání SSH spojení při restartu HA."},
+
+
+            {"key": "HA_WD_HA_RESTART_CMD", "label": "Restart command", "tab": "targets", "section": "targets_main",
+            "type": "str", "required": False, "placeholder": "ha host reboot",
+            "tooltip": "Příkaz spuštěný přes SSH na HA. Typicky 'ha host reboot' nebo 'reboot'."},
+
+            # -----------------
+            # TELEGRAM
+            # -----------------
+            {"key": "HA_WD_TELEGRAM_ENABLED", "label": "Telegram enabled", "tab": "telegram", "section": "tg_main",
+            "type": "select", "choices": ["0", "1"], "required": True, "placeholder": "1",
+            "tooltip": "1 = posílat Telegram notifikace, 0 = bez Telegramu."},
+
+            {"key": "HA_WD_TELEGRAM_TOKEN", "label": "Bot token", "tab": "telegram", "section": "tg_main",
+            "type": "secret", "required": False,
+            "tooltip": "Token od BotFather."},
+
+            {"key": "HA_WD_TELEGRAM_CHAT_ID", "label": "Chat ID", "tab": "telegram", "section": "tg_main",
+            "type": "str", "required": False, "placeholder": "123456789",
+            "tooltip": "Chat ID (z getUpdates nebo z bota)."},
+
+
+            {"key": "HA_WD_TELEGRAM_PREFIX", "label": "Message prefix", "tab": "telegram", "section": "tg_main",
+            "type": "str", "required": False, "placeholder": "RPi Watchdog",
+            "tooltip": "Prefix před zprávou (např. název zařízení / lokality)."},
+
+
+            {"key": "HA_WD_TELEGRAM_TIMEOUT_S", "label": "Telegram timeout (s)", "tab": "telegram", "section": "tg_main",
+            "type": "int", "required": False, "min": 1, "max": 60, "placeholder": "6",
+            "tooltip": "Timeout HTTP požadavku na Telegram API."},
+
+
+            # -----------------
+            # COOLDOWNS / TIMING
+            # -----------------
+            {"key": "HA_WD_NOTIFY_COOLDOWN_S", "label": "Notify cooldown (s)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 10, "max": 86400, "placeholder": "300",
+            "tooltip": "Minimální odstup mezi notifikacemi stejného typu (sekundy)."},
+
+
+            {"key": "HA_WD_UI_RESTART_COOLDOWN_S", "label": "UI restart cooldown (s)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 10, "max": 86400, "placeholder": "120",
+            "tooltip": "Minimální odstup mezi restarty rpi-admin-ui.service (sekundy)."},
+
+
+            {"key": "HA_WD_HA_RESTART_COOLDOWN_S", "label": "HA restart cooldown (s)", "tab": "timing", "section": "timing_main",
+            "type": "int", "required": True, "min": 10, "max": 86400, "placeholder": "600",
+            "tooltip": "Minimální odstup mezi restarty HA (sekundy), aby nedošlo k restart loopu."},
+
+
+            # -----------------
+            # LOGGING
+            # -----------------
+            {"key": "HA_WD_LOG_LEVEL", "label": "Log level", "tab": "logging", "section": "log_main",
+            "type": "select", "choices": ["DEBUG", "INFO", "WARNING", "ERROR"], "required": True, "placeholder": "INFO",
+            "tooltip": "Úroveň logu. INFO pro běžný provoz, DEBUG při ladění."},
+        ],
     },
 
 

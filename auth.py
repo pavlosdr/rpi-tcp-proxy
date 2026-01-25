@@ -1,3 +1,19 @@
+"""
+Authentication & authorization
+
+Modul zajišťující autentizaci uživatele
+pro rpi-admin-ui webové rozhraní.
+
+Funkce:
+- Login / logout
+- Ověření hesla
+- Session management
+- Ochrana UI endpointů
+
+Používáno:
+- app.py
+"""
+
 import os
 from functools import wraps
 from flask import session, redirect, url_for

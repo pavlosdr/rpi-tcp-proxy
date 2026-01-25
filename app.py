@@ -1,17 +1,31 @@
-# app.py
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, abort, jsonify, current_app
+"""
+rpi-admin-ui web application
+
+Hlavní Flask aplikace poskytující webové rozhraní
+pro správu služeb, monitoring a konfiguraci Raspberry Pi.
+
+Funkce:
+- Web UI (status, start/stop služeb)
+- Zobrazení agend a jejich stavu
+- Autentizace uživatele
+- Integrace s monitor.py a agendas.py
+
+Spouštěno jako hlavní entry-point aplikace.
+"""
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from dotenv import load_dotenv
 import os
-import io
-import re
 import logging
 import sys
+import time
+import threading
 import datetime as dt
-from collections import defaultdict, deque
-from typing import Optional, Dict
+from typing import Dict
 from mqtt_tools import (
     mqtt_list_retained_discovery, 
-    mqtt_delete_retained, 
+    _resolve_device_id_for_service,
+    _get_mqtt_conn_from_env,
+    mqtt_cleanup_discovery_for_device
 )
 from auth import login_required, check_credentials
 from monitor import (
@@ -22,10 +36,10 @@ from monitor import (
     get_mqtt_latency_test,
     get_modbus_rtt_test,
     tail_file,
-    parse_mqtt_report_log_stats,
 )
 from services_control import (
     SERVICES_META,
+    MQTT_DISCOVERY_TARGETS,
     get_meta,
     is_active,
     restart_service_safe,
@@ -38,144 +52,62 @@ from services_control import (
 from envfile import read_env_file
 from agenda_env import build_agenda_context, handle_agenda_post
 from config.agendas import AGENDAS
+from envfile import env_str, env_int
 
 # ---------------------- KONFIGURACE ---------------------- #
-
+# service_id, které restartují přímo tuto webovou appku (pro odložený restart)
+UI_SERVICE_IDS = {"ui"}  # případně přidej aliasy
 # ------------------------ .env --------------------------- #
 BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # načti .env ze stejného adresáře
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=ENV_PATH)
 
+# ------------------- Konfig z .env ----------------------- #
+PORT   = env_int("UI_PORT",8080)
+# MODBUS LOG_PKT FILE pro službu rpi-tcp-proxy
+LOG_FILE_PKT = env_str("LOG_FILE", "/var/log/modbus_proxy.log")
 
-# --- force logs to journald (stdout) ---
-root = logging.getLogger()
-root.handlers.clear()
+# ---------------------- Logging ---------------------------
+# Log minimization
+LOG_LEVEL = getattr(logging, env_str("UI_LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="[%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()],
+    force=True,  # přepíše předchozí konfigurace (Flask/werkzeug to občas nastaví dřív)
+)
+logger = logging.getLogger("ui_")
+logger.setLevel(LOG_LEVEL)
+# Utišení příliš ukecaného werkzeug
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-root.addHandler(handler)
-root.setLevel(logging.INFO)
-LOG_FILE = os.getenv("LOG_FILE", "/var/log/modbus_proxy.log")
+# ---------------------- LOG runtime ---------------------- #
+logger.debug("__file__ running from: %s", __file__)
+logger.debug("PYTHON: %s", sys.executable)
 
-app = Flask(__name__)
+
 # --------------------Flask app logger -------------------- #
+app = Flask(__name__)
 app.logger.handlers.clear()
 app.logger.propagate = True
-app.logger.setLevel(logging.INFO)
-
+app.logger.setLevel(LOG_LEVEL)
 app.secret_key = os.getenv("UI_SECRET", "change-me")
-# -------------Werkzeug (HTTP access + errors) ------------ #
-logging.getLogger("werkzeug").setLevel(logging.INFO)
 
-# ------------------------- helpers ------------------------- #
-def _read_tail(path: str, max_bytes: int = 200_000) -> str:
-    """Rychlé přečtení konce souboru (max_bytes)."""
-    if not os.path.exists(path):
-        return ""
-    size = os.path.getsize(path)
-    with open(path, "rb") as f:
-        if size > max_bytes:
-            f.seek(-max_bytes, os.SEEK_END)
-        data = f.read()
-    # uklid UTF-8 i když jsou v logu binární útržky
-    return data.decode("utf-8", errors="replace")
-
-_time_re = re.compile(r"^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})")
-_kind_re = re.compile(r"\b(out_of_order|stray_response|duplicate_request)\b")
-# volitelně RTT a tidy
-_rtt_re  = re.compile(r"\brtt=(\d+)ms\b")
-_tid_re  = re.compile(r"\btid=(\d+)\b")
-
-def _parse_dt_from_line(line: str) -> Optional[dt.datetime]:
-    m = _time_re.match(line)
-    if not m:
-        return None
-    dates, times = m.group(1), m.group(2)
+# ----------------------- helpers ------------------------- #
+def _restart_ui_delayed(service_id: str, delay_s: float = 0.7) -> None:
+    """
+    Odložený restart – nechá doběhnout HTTP response (redirect + flash),
+    potom teprve provede restart služby.
+    """
     try:
-        return dt.datetime.fromisoformat(f"{dates} {times}")
+        time.sleep(float(delay_s))
+        ok, msg = restart_service_safe(service_id)
+        if ok:
+            logger.info("UI delayed restart OK service_id=%s msg=%s", service_id, msg)
+        else:
+            logger.warning("UI delayed restart FAIL service_id=%s msg=%s", service_id, msg)
     except Exception:
-        return None
-
-def parse_log_metrics(
-    path: str,
-    window_minutes: int = 60,
-    max_scan_bytes: int = 2_000_000,
-):
-    """
-    Vrátí metriky za posledních `window_minutes`:
-      {
-        'counts': {'out_of_order': X, 'stray_response': Y, 'duplicate_request': Z, 'total': N},
-        'series': [{'t':'HH:MM','out_of_order':a,'stray_response':b,'duplicate_request':c,'total':s}, ...],
-        'rtt': {'avg_ms':..., 'p95_ms':..., 'samples':K}
-      }
-    Čteme jen konec souboru (max_scan_bytes) pro rychlost.
-    """
-    out = {
-        "counts": {"out_of_order": 0, "stray_response": 0, "duplicate_request": 0, "total": 0},
-        "series": [],
-        "rtt": {"avg_ms": None, "p95_ms": None, "samples": 0},
-    }
-    if not os.path.exists(path):
-        return out
-
-    now = dt.datetime.now()
-    window_start = now - dt.timedelta(minutes=window_minutes)
-
-    tail = _read_tail(path, max_bytes=max_scan_bytes)
-    if not tail:
-        return out
-
-    # agregace po minutách
-    buckets = defaultdict(lambda: {"out_of_order": 0, "stray_response": 0, "duplicate_request": 0, "total": 0})
-    rtts = []
-
-    for line in tail.splitlines():
-        ts = _parse_dt_from_line(line)
-        if not ts or ts < window_start:
-            continue
-
-        km = _kind_re.search(line)
-        if not km:
-            continue
-
-        kind = km.group(1)
-        out["counts"][kind] += 1
-        out["counts"]["total"] += 1
-
-        minute_key = ts.replace(second=0, microsecond=0)
-        buckets[minute_key][kind] += 1
-        buckets[minute_key]["total"] += 1
-
-        # RTT pokud je v řádku
-        rm = _rtt_re.search(line)
-        if rm:
-            try:
-                rtts.append(int(rm.group(1)))
-            except Exception:
-                pass
-
-    # převod bucketů do seřazené řady
-    for t in sorted(buckets.keys()):
-        v = buckets[t]
-        out["series"].append({
-            "t": t.strftime("%H:%M"),
-            "out_of_order": v["out_of_order"],
-            "stray_response": v["stray_response"],
-            "duplicate_request": v["duplicate_request"],
-            "total": v["total"],
-        })
-
-    # RTT statistiky
-    if rtts:
-        rtts.sort()
-        n = len(rtts)
-        out["rtt"]["samples"] = n
-        out["rtt"]["avg_ms"] = int(sum(rtts) / n)
-        p95_idx = max(0, int(0.95 * n) - 1)
-        out["rtt"]["p95_ms"] = rtts[p95_idx]
-
-    return out
-
+        logger.exception("UI delayed restart exception service_id=%s", service_id)
 # ------------------------ ROUTES ------------------------- #
 
 @app.route("/", methods=["GET"])
@@ -191,7 +123,27 @@ def index():
 @app.route("/restart/<service_id>", methods=["POST"])
 @login_required
 def restart(service_id):
+    logger.info("UI action=restart service_id=%s", service_id)
+
+    # Speciální režim pro restart samotného UI
+    if service_id in UI_SERVICE_IDS:
+        flash("Restartuji UI... za pár sekund obnov stránku.", "success")
+        threading.Thread(
+            target=_restart_ui_delayed,
+            args=(service_id, 0.7),
+            name="ui-restart-delayed",
+            daemon=True,
+        ).start()
+
+        # Redirect pryč z /restart/... aby prohlížeč nebyl “na mrtvém endpointu”
+        return redirect(url_for("services_page"))
+
+    # Ostatní služby – původní chování
     ok, msg = restart_service_safe(service_id)
+    if ok:
+        logger.info("UI restart OK service_id=%s msg=%s", service_id, msg)
+    else:
+        logger.warning("UI restart FAIL service_id=%s msg=%s", service_id, msg)
     flash(msg, "success" if ok else "error")
     return redirect(request.referrer or url_for("services_page"))
 
@@ -199,7 +151,12 @@ def restart(service_id):
 @app.route("/start/<service_id>", methods=["POST"])
 @login_required
 def start_service(service_id):
+    logger.info("UI action=start service_id=%s", service_id)
     ok, msg = start_service_safe(service_id)
+    if ok:
+        logger.info("UI start OK service_id=%s msg=%s", service_id, msg)
+    else:
+        logger.warning("UI start FAIL service_id=%s msg=%s", service_id, msg)
     flash(msg, "success" if ok else "error")
     return redirect(request.referrer or url_for("services_page"))
 
@@ -207,7 +164,12 @@ def start_service(service_id):
 @app.route("/stop/<service_id>", methods=["POST"])
 @login_required
 def stop_service(service_id):
+    logger.info("UI action=stop service_id=%s", service_id)
     ok, msg = stop_service_safe(service_id)
+    if ok:
+        logger.info("UI stop OK service_id=%s msg=%s", service_id, msg)
+    else:
+        logger.warning("UI stop FAIL service_id=%s msg=%s", service_id, msg)
     flash(msg, "success" if ok else "error")
     return redirect(request.referrer or url_for("services_page"))
 
@@ -256,7 +218,8 @@ def services_page():
 def service_detail(service_id):
     journal_lines = int(request.args.get("n", 200))
     log_lines = int(request.args.get("ln", 200))
-
+    logger.debug("UI service_detail service_id=%s journal_lines=%s log_lines=%s",
+             service_id, journal_lines, log_lines)
     key = resolve_service_key(service_id)
 
     meta = get_meta(key) or {
@@ -268,11 +231,13 @@ def service_detail(service_id):
 
     ok, state, err = is_active(key)
     if not ok and err:
+        logger.warning("UI service_detail is_active failed key=%s err=%s", key, err)
         flash(err, "error")
         return redirect(url_for("services_page"))
 
     status_out, journal_out, err2, unit = get_service_detail(key, journal_lines=journal_lines)
     if err2:
+        logger.warning("UI service_detail get_service_detail failed key=%s unit=%s err=%s", key, unit, err2)
         flash(err2, "error")
         return redirect(url_for("services_page"))
 
@@ -284,15 +249,14 @@ def service_detail(service_id):
     m["state"] = state
 
     # -------------------
-    # LOG pouze pro modbus-proxy
+    # LOG do suboru pouze pro modbus-proxy
     # -------------------
     log_enabled = (key == "modbus-proxy")
 
-    log_path = (LOG_FILE or "").strip() if log_enabled else ""
+    log_path = (LOG_FILE_PKT or "").strip() if log_enabled else ""
     log_exists = bool(log_path and os.path.exists(log_path))
     log_size = os.path.getsize(log_path) if log_exists else 0
     log_out = tail_file(log_path, log_lines) if log_exists else ""
-    log_stats = parse_mqtt_report_log_stats(log_out) if log_enabled else {"out_of_order": 0, "stray_response": 0, "duplicate_request": 0, "total": 0}
     
     return render_template(
         "service_detail.html",
@@ -311,21 +275,24 @@ def service_detail(service_id):
         log_out=log_out,
         log_exists=log_exists,
         log_size=log_size,
-        log_stats=log_stats,
         log_lines=log_lines,
     )
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
         if check_credentials(request.form.get("username"), request.form.get("password")):
             session["authenticated"] = True
+            logger.info("UI login OK username=%s", username)
             return redirect(url_for("index"))
+        logger.warning("UI login FAIL username=%s", username)
         flash("Neplatné přihlašovací údaje", "error")
     return render_template("login.html", title="Přihlášení", active_nav="dashboard")
 
 @app.route("/logout")
 def logout():
+    logger.info("UI logout")
     session.clear()
     return redirect(url_for("login"))
 
@@ -333,7 +300,6 @@ def logout():
 @login_required
 def network():
     import ipaddress
-    import os
 
     # pro diag_cards (a obecně metadata agend)
     try:
@@ -504,6 +470,7 @@ def network():
         if action == "ping":
             targets = request.form.get("targets", default_targets)
             ip_list = [ip.strip() for ip in targets.split(",") if ip.strip()]
+            logger.info("UI network action=ping targets=%s", ip_list)
             ping_results = get_multi_ping_stats(ip_list)
 
             for r in ping_results:
@@ -518,6 +485,7 @@ def network():
         elif action == "iperf":
             iperf_ip = request.form.get("iperf_ip", "192.168.1.20")
             duration = int(request.form.get("duration", 10))
+            logger.info("UI network action=iperf target=%s duration=%s", iperf_ip, duration)
             iperf_result = get_iperf_test(iperf_ip, duration)
 
         elif action == "mqtt_latency":
@@ -579,6 +547,7 @@ def network():
                     mqtt_latency = result
 
             except Exception as e:
+                logger.exception("UI network action=mqtt_latency failed")
                 mqtt_latency = {
                     "error": str(e),
                     "semafor": "bad",
@@ -638,6 +607,7 @@ def network():
                     warn_ms=warn_ms,
                 )
             except Exception as e:
+                logger.exception("UI network action=modbus_rtt failed")
                 modbus_rtt = {"error": str(e)}
 
     return render_template(
@@ -660,143 +630,199 @@ def network():
 def service_page():
     return render_template("service.html", title="Servis", active_nav="services")
 
-@app.route("/mqtt-discovery", methods=["GET", "POST"])
+@app.route("/settings/mqtt-discovery", methods=["GET"])
 @login_required
-def mqtt_discovery():
-    import os
+def settings_mqtt_discovery_page():
+    # default = první položka v mapě (nebo prázdno)
+    default_service = next(iter(MQTT_DISCOVERY_TARGETS.keys()), "")
+    service_key = (request.args.get("service") or default_service or "").strip().lower()
 
-    host = os.getenv("MODBUS_IO_MQTT_HOST", "192.168.1.20")
-    port = int(os.getenv("MODBUS_IO_MQTT_PORT", "1883"))
-    user = os.getenv("MODBUS_IO_MQTT_USERNAME", "")
-    pwd  = os.getenv("MODBUS_IO_MQTT_PASSWORD", "")
-    prefix = os.getenv("MODBUS_IO_HA_DISCOVERY_PREFIX", "homeassistant")
+    # Form defaults
+    contains = (request.args.get("contains") or "").strip()
+    window_s = str(request.args.get("window_s") or "2.0").strip()
+    limit = str(request.args.get("limit") or "500").strip()
 
-    items = []
-    result = None
-    error = None
+    # Targets pro select
+    targets = []
+    for k, meta in MQTT_DISCOVERY_TARGETS.items():
+        c = _get_mqtt_conn_from_env(k)
+        dev_id = (c.get("device_id") or "").strip()
 
-    if request.method == "POST":
-        app.logger.info("mqtt-discovery POST action=%s form=%s", request.form.get("action"), dict(request.form))
-        app.logger.info("mqtt-discovery env host=%s port=%s prefix=%s", host, port, prefix)
-        action = (request.form.get("action") or "").strip().lower()
-        # fallback: když template neposílá action, bereme POST jako "list"
-        if not action:
-            action = "list"
-        # UI používá scan => chovej se jako list
-        if action == "scan":
-            action = "list"    
+        # fallback pro kompatibilitu (pokud resolver existuje)
+        if not dev_id:
+            try:
+                dev_id = (_resolve_device_id_for_service(k) or "").strip()
+            except Exception:
+                dev_id = ""
+
+        targets.append({"key": k, "label": meta.get("label", k), "device_id": dev_id})
+
+    # Preview conn pro aktuálně vybranou službu
+    conn = _get_mqtt_conn_from_env(service_key)
+    device_id = (conn.get("device_id") or "").strip()
+    if not device_id:
         try:
-            if action == "list":
-                items = mqtt_list_retained_discovery(
-                    host=host, port=port, username=user, password=pwd,
-                    discovery_prefix=prefix,
-                    contains = (request.form.get("contains") or "modbus_io").strip(),
-                    window_s = float(request.form.get("window_s") or 1.5),
-                    limit = int(request.form.get("limit") or 500),
-                )
-                app.logger.info("mqtt-discovery: loaded %s items", len(items))
+            device_id = (_resolve_device_id_for_service(service_key) or "").strip()
+        except Exception:
+            device_id = ""
 
-            elif action == "delete":
-                # textové pole: jeden topic na řádek
-                raw = request.form.get("delete_topics", "")
-                topics = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-                result = mqtt_delete_retained(
-                    host=host, port=port, username=user, password=pwd,
-                    topics=topics,
-                )
-        except Exception as e:
-            error = str(e)
+    conn_preview = {
+        "service": service_key,
+        "device_id": device_id,
+        "host": conn.get("host", ""),
+        "port": conn.get("port", ""),
+        "discovery_prefix": conn.get("discovery_prefix", "homeassistant"),
+        "username_set": bool(conn.get("username", "")),
+    }
 
+    if service_key and not device_id:
+        flash(
+            f"Pro sluzbu '{service_key}' chybi DEVICE_ID v .env "
+            f"(chybi odpovidajici *_MQTT_DEVICE_ID).",
+            "warning",
+        )
+
+    # GET jen vykreslí stránku; items se načítají POSTem /list
     return render_template(
-        "mqtt_discovery.html",
-        items=items,
-        result=result,
-        error=error,
-        mqtt_host=host,
-        mqtt_port=port,
-        title="MQTT Discovery – servis",
-        active_nav="settings"
+        "settings_mqtt_discovery.html",
+        targets=targets,
+        selected=service_key,
+        contains=contains,
+        window_s=window_s,
+        limit=limit,
+        items=[],
+        stats=None,
+        conn_preview=conn_preview,  # <- nové: použij v šabloně
     )
 
-@app.route("/logs", methods=["GET"])
+
+
+@app.route("/settings/mqtt-discovery/list", methods=["POST"])
 @login_required
-def logs():
-    """
-    Zobrazí posledních N řádků logu + metriky z posledních M minut.
-    /logs?tail=2000&minutes=120
-    """
-    tail_lines = int(request.args.get("tail", 1000))
-    minutes = int(request.args.get("minutes", 60))
+def settings_mqtt_discovery_list():
+    service_key = (request.form.get("service") or "").strip().lower()
+    contains = (request.form.get("contains") or "").strip()
+    window_s = float(request.form.get("window_s") or "2.0")
+    limit = int(request.form.get("limit") or "500")
 
-    if not os.path.exists(LOG_FILE):
-        flash(f"[LOG] Soubor neexistuje: {LOG_FILE}", "error")
-        tail_text = ""
-        metrics = {"counts": {"out_of_order": 0, "stray_response": 0, "duplicate_request": 0, "total": 0},
-                   "series": [], "rtt": {"avg_ms": None, "p95_ms": None, "samples": 0}}
-    else:
-        # načti jen konec souboru, pak ořízni na požadovaný počet řádků
-        raw = _read_tail(LOG_FILE, max_bytes=2_000_000)
-        lines = raw.splitlines()
-        if tail_lines > 0 and len(lines) > tail_lines:
-            lines = lines[-tail_lines:]
-        tail_text = "\n".join(lines)
+    conn = _get_mqtt_conn_from_env(service_key)
 
-        # metriky
-        metrics = parse_log_metrics(LOG_FILE, window_minutes=minutes, max_scan_bytes=2_000_000)
+    # DEVICE_ID: preferuj z conn (z mapy), fallback na legacy resolver pokud existuje
+    device_id = (conn.get("device_id") or "").strip()
+    if not device_id:
+        try:
+            device_id = (_resolve_device_id_for_service(service_key) or "").strip()
+        except Exception:
+            device_id = ""
 
-    # připravíme datasety pro Chart.js
-    labels = [p["t"] for p in metrics["series"]]
-    ds_out = [p["out_of_order"] for p in metrics["series"]]
-    ds_str = [p["stray_response"] for p in metrics["series"]]
-    ds_dup = [p["duplicate_request"] for p in metrics["series"]]
-    ds_tot = [p["total"] for p in metrics["series"]]
-
-    return render_template(
-        "logs.html",
-        title="Logy proxy",
-        log_path=LOG_FILE,
-        tail_text=tail_text,
-        tail_lines=tail_lines,
-        minutes=minutes,
-        counts=metrics["counts"],
-        rtt=metrics["rtt"],
-        labels=labels,
-        ds_out=ds_out,
-        ds_str=ds_str,
-        ds_dup=ds_dup,
-        ds_tot=ds_tot,
-    )
-
-@app.route("/logs/download", methods=["GET"])
-@login_required
-def logs_download():
-    path = (LOG_FILE or "").strip()
-    if not path:
-        abort(404)
-
-    path = os.path.abspath(path)
-    if not os.path.isfile(path):
-        abort(404)
+    if not device_id:
+        flash(
+            f"Pro sluzbu '{service_key}' nemam DEVICE_ID v .env "
+            f"(chybi odpovidajici *_MQTT_DEVICE_ID).",
+            "error",
+        )
+        return redirect(url_for("settings_mqtt_discovery_page", service=service_key))
 
     try:
-        return send_file(
-            path,
-            as_attachment=True,
-            attachment_filename=os.path.basename(path),
-            mimetype="text/plain",
-            conditional=True,
+        items = mqtt_list_retained_discovery(
+            host=conn["host"],
+            port=int(conn["port"]),
+            username=conn.get("username", ""),
+            password=conn.get("password", ""),
+            discovery_prefix=conn.get("discovery_prefix", "homeassistant"),
+            device_id=device_id,
+            contains=contains,
+            window_s=window_s,
+            limit=limit,
         )
-    except PermissionError:
-        abort(403)
+        flash(f"Nacteno {len(items)} retained discovery topicu pro device_id={device_id}.", "success")
+        stats = {"service": service_key, "device_id": device_id, "found": len(items), "deleted": 0}
     except Exception as e:
-        current_app.logger.exception("logs_download failed: %s", e)
-        abort(500)
+        flash(f"Chyba pri nacitani retained discovery: {e}", "error")
+        items = []
+        stats = None
+
+    # priprav data pro select (ať je 1 zdroj pravdy = _get_mqtt_conn_from_env)
+    targets = []
+    for k, meta in MQTT_DISCOVERY_TARGETS.items():
+        c = _get_mqtt_conn_from_env(k)
+        dev_id = (c.get("device_id") or "").strip()
+        if not dev_id:
+            try:
+                dev_id = (_resolve_device_id_for_service(k) or "").strip()
+            except Exception:
+                dev_id = ""
+        targets.append({"key": k, "label": meta.get("label", k), "device_id": dev_id})
+
+    return render_template(
+        "settings_mqtt_discovery.html",
+        targets=targets,
+        selected=service_key,
+        contains=contains,
+        window_s=str(window_s),
+        limit=str(limit),
+        items=items,
+        stats=stats,
+    )
+
+
+@app.route("/settings/mqtt-discovery/cleanup", methods=["POST"])
+@login_required
+def settings_mqtt_discovery_cleanup():
+    service_key = (request.form.get("service") or "").strip().lower()
+    contains = (request.form.get("contains") or "").strip()
+    window_s = float(request.form.get("window_s") or "2.0")
+    limit = int(request.form.get("limit") or "2000")
+
+    # jednotný zdroj pravdy pro MQTT připojení + device_id (dle service_key)
+    conn = _get_mqtt_conn_from_env(service_key)
+
+    device_id = (conn.get("device_id") or "").strip()
+    if not device_id:
+        # fallback pro kompatibilitu, pokud máš resolver
+        try:
+            device_id = (_resolve_device_id_for_service(service_key) or "").strip()
+        except Exception:
+            device_id = ""
+
+    if not device_id:
+        flash(
+            f"Pro sluzbu '{service_key}' nemam DEVICE_ID v .env "
+            f"(chybi odpovidajici *_MQTT_DEVICE_ID).",
+            "error",
+        )
+        return redirect(url_for("settings_mqtt_discovery_page", service=service_key))
+
+    try:
+        res = mqtt_cleanup_discovery_for_device(
+            host=conn["host"],
+            port=conn["port"],
+            username=conn.get("username", ""),
+            password=conn.get("password", ""),
+            discovery_prefix=conn.get("discovery_prefix", "homeassistant"),
+            device_id=device_id,
+            contains=contains,
+            window_s=window_s,
+            limit=limit,
+        )
+        flash(
+            f"Smazano retained discovery: deleted={res.get('deleted')} "
+            f"(found={res.get('found')}) pro device_id={device_id}.",
+            "success",
+        )
+    except Exception as e:
+        flash(f"Chyba pri mazani retained discovery: {e}", "error")
+
+    # po cleanupu návrat na stránku
+    return redirect(url_for("settings_mqtt_discovery_page", service=service_key, contains=contains))
+
 
 @app.route("/api/service-status/<service_id>", methods=["GET"])
 @login_required
 def api_service_status(service_id):
     ok, state, err = is_active(service_id)
     if not ok and err:
+        logger.debug("UI api_service_status failed service_id=%s err=%s", service_id, err)
         return jsonify({"state": "unknown", "error": err}), 400
     return jsonify({"state": state})
 
@@ -804,6 +830,7 @@ def api_service_status(service_id):
 @login_required
 def agenda_env(agenda_id):
     if request.method == "POST":
+        logger.info("UI agenda_env POST agenda_id=%s", agenda_id)
         ok, ctx, msg = handle_agenda_post(agenda_id)
         if ok:
             flash(msg, "success")
@@ -819,6 +846,7 @@ def agenda_env(agenda_id):
 
     ok, ctx, msg = build_agenda_context(agenda_id)
     if not ok:
+        logger.warning("UI agenda_env POST failed agenda_id=%s msg=%s", agenda_id, msg)
         flash(msg, "error")
         return redirect(url_for("index"))
 
@@ -833,4 +861,5 @@ def agenda_env(agenda_id):
 
 if __name__ == "__main__":
     # pro vývoj; v produkci běží přes systemd
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    logger.info("UI starting dev server host=0.0.0.0 port=%s", PORT)
+    app.run(host="0.0.0.0", port=PORT)

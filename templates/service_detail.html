@@ -161,19 +161,11 @@
   </div>
 
   {% if log_enabled %}
-  <!-- Log file -->
+  <!-- Log file PKT-->
   <div class="card shadow-sm mt-3">
     <div class="card-header d-flex align-items-center justify-content-between">
       <div>
         <strong>Log Modbus</strong>
-
-        {# malé souhrny v hlavičce #}
-        <span class="text-muted small ms-2">
-          Out of order: <strong>{{ log_stats.out_of_order }}</strong> |
-          Stray response: <strong>{{ log_stats.stray_response }}</strong> |
-          Duplicate request: <strong>{{ log_stats.duplicate_request }}</strong> |
-          Celkem: <strong>{{ log_stats.total }}</strong>
-        </span>
 
         {# mini info o souboru #}
         {% if log_exists %}
