@@ -16,6 +16,7 @@ Funkce:
 MQTT:
 - base topic: <MQTT_BASE_TOPIC>
 - discovery: <DISCOVERY_PREFIX>/<domain>/<DEVICE_ID>/<object_id>/config
+- výsledné entity_id je určeno položkou `default_entity_id` v discovery payloadu
 
 Konfigurace:
 - .env (Modbus, MQTT, mapování vstupů, discovery enable)
@@ -351,7 +352,6 @@ def publish_discovery(mqtt_client: mqtt.Client) -> None:
                 entities.append(
                     ("binary_sensor", _oid(oid_suffix), {
                         "name": f"Vypínač {unit}:{ch}",
-                        "object_id": _oid(oid_suffix),
                         "unique_id": _oid(oid_suffix),
                         "state_topic": state_topic,
                         "payload_on": "ON",
@@ -366,7 +366,6 @@ def publish_discovery(mqtt_client: mqtt.Client) -> None:
                 entities.append(
                     ("sensor", _oid(f"{oid_suffix}_action"), {
                         "name": f"Tlačítko {unit}:{ch}",
-                        "object_id": _oid(oid_suffix),
                         "unique_id": _oid(oid_suffix),
                         "state_topic": event_topic,
                         "icon": "mdi:gesture-tap",
@@ -380,7 +379,6 @@ def publish_discovery(mqtt_client: mqtt.Client) -> None:
     entities.append(
         ("sensor", _oid("bridge_last_event_age_s"), {
             "name": f"{DEVICE_NAME} doba od poslední události",
-            "object_id": _oid("bridge_last_event_age_s"),
             "unique_id": _oid("bridge_last_event_age_s"),
             "state_topic": MQTT_TOPIC_BRIDGE_LAST_AGE,
             "unit_of_measurement": "s",
@@ -394,7 +392,6 @@ def publish_discovery(mqtt_client: mqtt.Client) -> None:
     entities.append(
         ("binary_sensor", _oid("bridge_online"), {
             "name": f"{DEVICE_NAME} bridge online",
-            "object_id": _oid("bridge_online"),
             "unique_id": _oid("bridge_online"),
             "state_topic": MQTT_TOPIC_BRIDGE_ONLINE,
             "payload_on": "1",
@@ -407,7 +404,6 @@ def publish_discovery(mqtt_client: mqtt.Client) -> None:
     entities.append(
         ("binary_sensor", _oid("ws_flow_ok"), {
             "name": f"{DEVICE_NAME} poskytuje data",
-            "object_id": _oid("ws_flow_ok"),
             "unique_id": _oid("ws_flow_ok"),
             "state_topic": MQTT_TOPIC_BRIDGE_FLOW_OK,
             "payload_on": "1",
@@ -418,8 +414,12 @@ def publish_discovery(mqtt_client: mqtt.Client) -> None:
         })
     )
 
-    for domain, object_id, payload in entities:
-        topic = _disc_topic(domain, object_id)
+    for domain, discovery_object_id, payload in entities:
+        #  default_entity_id = domain + object_id
+        ent_slug = str(discovery_object_id).strip().lower()
+        payload["default_entity_id"] = f"{domain}.{ent_slug}"
+
+        topic = _disc_topic(domain, discovery_object_id)
         mqtt_client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1, retain=True)
 
     logger.info("HA discovery published (%s entities)", len(entities))
@@ -456,7 +456,7 @@ def create_mqtt_client() -> mqtt.Client:
     client.reconnect_delay_set(min_delay=1, max_delay=30)
 
     # callbacks (API v2)
-    def on_connect_v2(c, userdata, flags, reason_code, properties=None):
+    def on_connect_v2(c, userdata, flags, reason_code, properties):
         rc = _rc_int(reason_code)
         if rc == 0:
             logger.info("MQTT: connected rc=%s", rc)
@@ -469,12 +469,17 @@ def create_mqtt_client() -> mqtt.Client:
         else:
             logger.error("MQTT: connect failed rc=%s", rc)
 
-    def on_disconnect_v2(c, userdata, reason_code, properties=None):
+    # !!! v2 podpis má 5 args: (client, userdata, disconnect_flags, reason_code, properties)
+    def on_disconnect_v2(c, userdata, disconnect_flags, reason_code, properties):
         rc = _rc_int(reason_code)
         if rc == 0:
             logger.info("MQTT: disconnected rc=%s", rc)
         else:
-            logger.warning("MQTT: disconnected rc=%s", rc)
+            logger.warning(
+                "MQTT: disconnected rc=%s flags=%s",
+                rc,
+                getattr(disconnect_flags, "value", disconnect_flags),
+            )
 
     client.on_connect = on_connect_v2
     client.on_disconnect = on_disconnect_v2
@@ -555,6 +560,17 @@ def main() -> int:
             try:
                 if modbus_client.connect():
                     logger.info("Modbus: connected (port opened)")
+                    # po otevření portu dej čas USB/driveru a vyčisti RX/TX buffery
+                    time.sleep(0.3)
+                    try:
+                        if getattr(modbus_client, "socket", None):
+                            s = modbus_client.socket
+                            if hasattr(s, "reset_input_buffer"):
+                                s.reset_input_buffer()
+                            if hasattr(s, "reset_output_buffer"):
+                                s.reset_output_buffer()
+                    except Exception:
+                        pass
                     break
             except Exception:
                 logger.exception("Modbus: connect exception")

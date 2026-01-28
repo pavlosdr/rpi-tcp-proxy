@@ -14,6 +14,7 @@ Funkce:
 MQTT:
 - base topic: <MQTT_BASE_TOPIC>
 - discovery: <DISCOVERY_PREFIX>/<domain>/<DEVICE_ID>/<object_id>/config
+- výsledné entity_id je určeno položkou `default_entity_id` v discovery payloadu
 
 Konfigurace:
 - .env (MQTT, Infigy, entity prefix, timing)
@@ -192,16 +193,35 @@ TOTAL_EXCLUDE_PATTERNS = [
     "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.0",        # metadata
     "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.1",       # fazove hodnoty
     "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.2",  
+    "NEW_EM_ENERGY_CONSUMED_TOTAL",
     "NEW_PV_BATTERY_DISCHARGE_POWER_TOTAL.",
     "NEW_PV_BATTERY_DISCHARGE_POWER_TOTAL.goodwe-1",
+    "NEW_PV_BATTERY_DISCHARGE_TOTAL",
+    "PV_ENERGY_PRODUCED_TOTAL_FOR_GRAPHS",
+    "PV_ENERGY_PRODUCED_TOTAL_FOR_GRAPHS_R",
+    "NEW_PV_ENERGY_PRODUCED_TOTAL_FOR_GRAPHS",
+
+    "PWM_pulse_time_real",
+    "ACTUAL_TIME",
+    "EM_ACTUAL_LOAD_MAX",
+    "PWM_pulse_time_real",
+    "DO.6",
+    "DO.7",
+    "DO.8",
+    "PV_cnt_com_ok",
+    "anim_HOME_ACTUAL_POWER",
+
     # zajímavá
+    "EM_ENERGY_OVERFLOW_TOTAL_R",
+    "NEW_EM_ENERGY_OVERFLOW_TOTAL",
     "PV_BATTERY_DISCHARGE_TOTAL",
     "PV_BATTERY_DISCHARGE_TOTAL_R",
     "EM_ENERGY_CONSUMED_TOTAL_R",
     "EM_ENERGY_CONSUMED_TOTAL",
     "HOME_CONSUMPTION_TOTAL",
-    "NEW_PV_BATTERY_DISCHARGE_TOTAL",
-    "NEW_EM_ENERGY_CONSUMED_TOTAL",
+    "HW_ENERGY_PRODUCED_TOTAL",
+    "HW_TEMP",
+    "PWM_pulse_time_real",
 ]
 
 def _is_excluded_total(full_key: str) -> bool:
@@ -213,16 +233,15 @@ def _is_excluded_total(full_key: str) -> bool:
             return True
 
     # vylouceni fazovych indexu .0 .1 .2
-    if fk.endswith((".0", ".1", ".2")):
-        return True
+    #if fk.endswith((".0", ".1", ".2")):
+    #    return True
 
     return False
 
 def log_total_keys(payload: dict, prefix: str = "") -> None:
     """
     Rekurzivne projde payload a zaloguje vsechny klice,
-    ktere obsahuji retezec 'TOTAL' (case-insensitive),
-    ale nejsou na seznamu vyloucenych.
+    nejsou na seznamu vyloucenych.
     """
     if not isinstance(payload, dict):
         return
@@ -231,13 +250,13 @@ def log_total_keys(payload: dict, prefix: str = "") -> None:
         full_key = f"{prefix}.{key}" if prefix else key
         key_upper = key.upper()
 
-        if "TOTAL" in key_upper:
-            if not _is_excluded_total(full_key):
-                logger.debug(
-                    "INFIGY TOTAL candidate: %s = %s",
-                    full_key,
-                    value,
-                )
+        
+        if not _is_excluded_total(full_key):
+            logger.debug(
+                "INFIGY TOTAL: %s = %s",
+                full_key,
+                value,
+            )
 
         if isinstance(value, dict):
             log_total_keys(value, full_key)
@@ -273,7 +292,6 @@ def publish_discovery():
         # -------- Živé výkonové a teplotní senzory --------
         ("sensor", _oid("boiler_temperature"), {
             "name": "Boiler aktuální teplota",
-            "object_id": _uid("boiler_temperature"),
             "unique_id": _uid("boiler_temperature"),
             "state_topic": mqtt_topic("boiler", "temperature"),
             "unit_of_measurement": "°C",
@@ -285,100 +303,99 @@ def publish_discovery():
         # ------- Boiler per-phase power (W) + total -------
         ("sensor", _oid("boiler_power_w_phase1"), {
             "name": "Boiler aktuální odběr fáze 1",
-            "object_id": _uid("boiler_power_w_phase1"),
             "unique_id": _uid("boiler_power_w_phase1"),
             "state_topic": mqtt_topic("boiler", "power_w", "phase1"),
             "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:water-boiler",
             "device": dev,
         }),
         ("sensor", _oid("boiler_power_w_phase2"), {
             "name": "Boiler aktuální odběr fáze 2",
-            "object_id": _uid("boiler_power_w_phase2"),
             "unique_id": _uid("boiler_power_w_phase2"),
             "state_topic": mqtt_topic("boiler", "power_w", "phase2"),
             "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:water-boiler",
             "device": dev,
         }),
         ("sensor", _oid("boiler_power_w_phase3"), {
             "name": "Boiler aktuální odběr fáze 3",
-            "object_id": _uid("boiler_power_w_phase3"),
             "unique_id": _uid("boiler_power_w_phase3"),
             "state_topic": mqtt_topic("boiler", "power_w", "phase3"),
             "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:water-boiler",
             "device": dev,
         }),
         ("sensor", _oid("boiler_power_w_total"), {
             "name": "Boiler aktuální odběr",
-            "object_id": _uid("boiler_power_w_total"),
             "unique_id": _uid("boiler_power_w_total"),
             "state_topic": mqtt_topic("boiler", "power_w", "total"),
             "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:water-boiler",
             "device": dev,
         }),
 
         ("sensor", _oid("home_power_w"), {
             "name": "Spotřeba domu",
-            "object_id": _uid("home_power_w"),
             "unique_id": _uid("home_power_w"),
             "state_topic": mqtt_topic("home", "power_w", "total"),
             "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:power-plug-outline",
             "device": dev,
         }),
         ("sensor", _oid("battery_power_w"), {
             "name": "Baterie",
-            "object_id": _uid("battery_power_w"),
             "unique_id": _uid("battery_power_w"),
             "state_topic": mqtt_topic("battery", "power_w"),
             "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:battery-high",
             "device": dev,
         }),
-        ("sensor", _oid("grid_surplus_kw"), {
+        ("sensor", _oid("grid_surplus_w"), {
             "name": "Síť",
-            "object_id": _uid("grid_surplus_kw"),
-            "unique_id": _uid("grid_surplus_kw"),
-            "state_topic": mqtt_topic("grid", "surplus_total_kw"),
-            "unit_of_measurement": "kW",
+            "unique_id": _uid("grid_surplus_w"),
+            "state_topic": mqtt_topic("grid", "surplus_total_w"),
+            "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:transmission-tower",
             "device": dev,
         }),
         ("sensor", _oid("pv_power_w"), {
             "name": "FVE",
-            "object_id": _uid("pv_power_w"),
             "unique_id": _uid("pv_power_w"),
             "state_topic": mqtt_topic("pv", "power_w"),
             "unit_of_measurement": "W",
             "device_class": "power",
             "state_class": "measurement",
+            "icon": "mdi:solar-power",
             "device": dev,
         }),
         ("sensor", _oid("battery_soc"), {
             "name": "Stav baterie",
-            "object_id": _uid("battery_soc"),
             "unique_id": _uid("battery_soc"),
             "state_topic": mqtt_topic("battery", "soc"),
             "unit_of_measurement": "%",
             "device_class": "battery",
             "state_class": "measurement",
+            "icon": "mdi:battery-high",
             "device": dev,
         }),
 
         # -------- Health --------
         ("sensor", _oid("bridge_last_event_age_s"), {
             "name": "Infigy doba od poslední události",
-            "object_id": _uid("bridge_last_event_age_s"),
             "unique_id": _uid("bridge_last_event_age_s"),
             "state_topic": mqtt_topic("bridge", "last_event_age_s"),
             "unit_of_measurement": "s",
@@ -388,7 +405,6 @@ def publish_discovery():
         }),
         ("binary_sensor", _oid("bridge_online"), {
             "name": "Infigy bridge online",
-            "object_id": _uid("bridge_online"),
             "unique_id": _uid("bridge_online"),
             "state_topic": mqtt_topic("bridge", "online"),
             "payload_on": "1",
@@ -398,7 +414,6 @@ def publish_discovery():
         }),
         ("binary_sensor", _oid("ws_flow_ok"), {
             "name": "Infigy poskytuje data",
-            "object_id": _uid("ws_flow_ok"),
             "unique_id": _uid("ws_flow_ok"),
             "state_topic": mqtt_topic("bridge", "ws_flow_ok"),
             "payload_on": "1",
@@ -413,85 +428,86 @@ def publish_discovery():
         # -------- Integrované energie (kWh) --------
         ("sensor", _oid("energy_home_kwh"), {
             "name": "Home Energy",
-            "object_id": _uid("energy_home_kwh"),
             "unique_id": _uid("energy_home_kwh"),
             "state_topic": mqtt_topic("energy", "home_kwh"),
             "unit_of_measurement": "kWh",
             "device_class": "energy",
             "state_class": "total_increasing",
+            "icon": "mdi:power-plug-outline",
             "device": dev,
         }),
         ("sensor", _oid("energy_pv_kwh"), {
             "name": "PV Energy",
-            "object_id": _uid("energy_pv_kwh"),
             "unique_id": _uid("energy_pv_kwh"),
             "state_topic": mqtt_topic("energy", "pv_kwh"),
             "unit_of_measurement": "kWh",
             "device_class": "energy",
             "state_class": "total_increasing",
+            "icon": "mdi:solar-power",
             "device": dev,
         }),
         ("sensor", _oid("energy_grid_import_kwh"), {
             "name": "Grid Import Energy",
-            "object_id": _uid("energy_grid_import_kwh"),
             "unique_id": _uid("energy_grid_import_kwh"),
             "state_topic": mqtt_topic("energy", "grid_import_kwh"),
             "unit_of_measurement": "kWh",
             "device_class": "energy",
             "state_class": "total_increasing",
+            "icon": "mdi:transmission-tower-export",
             "device": dev,
         }),
         ("sensor", _oid("energy_grid_export_kwh"), {
             "name": "Grid Export Energy",
-            "object_id": _uid("energy_grid_export_kwh"),
             "unique_id": _uid("energy_grid_export_kwh"),
             "state_topic": mqtt_topic("energy", "grid_export_kwh"),
             "unit_of_measurement": "kWh",
             "device_class": "energy",
             "state_class": "total_increasing",
+            "icon": "mdi:transmission-tower-import",
             "device": dev,
         }),
         ("sensor", _oid("energy_bat_charge_kwh"), {
             "name": "Battery Charge Energy",
-            "object_id": _uid("energy_bat_charge_kwh"),
             "unique_id": _uid("energy_bat_charge_kwh"),
             "state_topic": mqtt_topic("energy", "bat_charge_kwh"),
             "unit_of_measurement": "kWh",
             "device_class": "energy",
             "state_class": "total_increasing",
+            "icon": "mdi:battery-high",
             "device": dev,
         }),
         ("sensor", _oid("energy_bat_discharge_kwh"), {
             "name": "Battery Discharge Energy",
-            "object_id": _uid("energy_bat_discharge_kwh"),
             "unique_id": _uid("energy_bat_discharge_kwh"),
             "state_topic": mqtt_topic("energy", "bat_discharge_kwh"),
             "unit_of_measurement": "kWh",
             "device_class": "energy",
             "state_class": "total_increasing",
+            "icon": "mdi:battery-high",
             "device": dev,
         }),
         ("sensor", _oid("energy_boiler_kwh"), {
             "name": "Boiler Energy",
-            "object_id": _uid("energy_boiler_kwh"),
             "unique_id": _uid("energy_boiler_kwh"),
             "state_topic": mqtt_topic("energy", "boiler_kwh"),
             "unit_of_measurement": "kWh",
             "device_class": "energy",
             "state_class": "total_increasing",
+            "icon": "mdi:water-boiler",
             "device": dev,
         }),
     ]
 
     for domain, discovery_object_id, payload in entities:
+        #    default_entity_id = domain + object_id
+        ent_slug = str(discovery_object_id).strip().lower()
+        payload["default_entity_id"] = f"{domain}.{ent_slug}"
+
         topic = _disc_topic(domain, discovery_object_id)
         client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1, retain=True)
 
     logger.info("HA discovery published (%s entities)", len(entities))
 
-    # Notes:
-    # - entity_id will be stable: e.g. sensor.infigy_boiler_temperature, binary_sensor.infigy_bridge_online, ...
-    # - You can change ENTITY_PREFIX via .env to namespace multiple bridges.
 
 # ---------------------- MQTT callbacks --------------------- #
 # v2 i v1 kompatibilní on_connect - zamezí error v rozdílném počtu parametrů
@@ -559,6 +575,27 @@ def on_store_change(data):
         # Teplota bojleru (°C)
         if "HW_TEMP" in payload:
             publish("boiler/temperature", round(float(payload["HW_TEMP"]), 2), qos=0)
+        # Celková spotřeba bojleru kWh
+        if "HW_ENERGY_PRODUCED_TOTAL" in payload:
+            publish("energy/boiler_kwh", round(float(payload["HW_ENERGY_PRODUCED_TOTAL"]), 6), retain=True, qos=1)
+        # Celková výroba FVE kWh
+        if "PV_ENERGY_PRODUCED_TOTAL" in payload:
+            publish("energy/pv_kwh", round(float(payload["PV_ENERGY_PRODUCED_TOTAL"]), 6), retain=True, qos=1)
+        # Celkový odběr ze sítě kWh
+        if "EM_ENERGY_CONSUMED_TOTAL" in payload:
+            publish("energy/grid_import_kwh", round(float(payload["EM_ENERGY_CONSUMED_TOTAL"]), 6), retain=True, qos=1)
+        # Celkové vybití baterie kWh (Infigy to vrací obráceně)
+        if "PV_BATTERY_CHARGE_TOTAL" in payload:
+            publish("energy/bat_discharge_kwh", round(float(payload["PV_BATTERY_CHARGE_TOTAL"]), 6), retain=True, qos=1)
+        # Celkové nabití baterie kWh (Infigy to vrací obráceně)
+        if "PV_BATTERY_DISCHARGE_TOTAL" in payload:
+            publish("energy/bat_charge_kwh", round(float(payload["PV_BATTERY_DISCHARGE_TOTAL"]), 6), retain=True, qos=1)
+        # Celkové spotřeba domu kWh
+        if "HOME_CONSUMPTION_TOTAL" in payload:
+            publish("energy/home_kwh", round(float(payload["HOME_CONSUMPTION_TOTAL"]), 6), retain=True, qos=1)
+        # Celkový přetok do sítě kWh
+        if "EM_ENERGY_OVERFLOW_TOTAL" in payload:
+            publish("energy/grid_export_kwh", round(float(payload["EM_ENERGY_OVERFLOW_TOTAL"]), 6), retain=True, qos=1)
 
         # Příkon bojleru po fázích (kW -> W) + celkem
         p1 = p2 = p3 = None
@@ -604,9 +641,9 @@ def on_store_change(data):
             # rozdělení na charge/discharge
             current_power["bat_charge"] = max(0.0, float(bat_w))
             current_power["bat_discharge"] = max(0.0, -float(bat_w))
-        if "SURPLUS_INFO_TOTAL" in payload:        # kW (+ export, - import)
+        if "SURPLUS_INFO_TOTAL" in payload:        # kW (+ export, - import) >>> přepočet na W
             s_kw = round(float(payload["SURPLUS_INFO_TOTAL"]), 4)
-            publish("grid/surplus_total_kw", s_kw, qos=0)
+            publish("grid/surplus_total_w", int(round(kw_to_w(s_kw))), qos=0)
             # odvoď import/export ve W
             if s_kw >= 0:
                 current_power["grid_export"] = float(s_kw) * 1000.0
@@ -764,13 +801,13 @@ def energy_integrator(stop_evt: threading.Event):
             pub_timer += dt_s
             if pub_timer >= pub_interval_s:
                 pub_timer = 0.0
-                publish("energy/home_kwh", round(energy_totals["home"], 6), retain=True, qos=1)
-                publish("energy/pv_kwh", round(energy_totals["pv"], 6), retain=True, qos=1)
-                publish("energy/grid_import_kwh", round(energy_totals["grid_import"], 6), retain=True, qos=1)
-                publish("energy/grid_export_kwh", round(energy_totals["grid_export"], 6), retain=True, qos=1)
-                publish("energy/bat_charge_kwh", round(energy_totals["bat_charge"], 6), retain=True, qos=1)
-                publish("energy/bat_discharge_kwh", round(energy_totals["bat_discharge"], 6), retain=True, qos=1)
-                publish("energy/boiler_kwh", round(energy_totals["boiler_total"], 6), retain=True, qos=1)
+            #    publish("energy/home_kwh", round(energy_totals["home"], 6), retain=True, qos=1)
+            #    publish("energy/pv_kwh", round(energy_totals["pv"], 6), retain=True, qos=1)
+            #    publish("energy/grid_import_kwh", round(energy_totals["grid_import"], 6), retain=True, qos=1)
+            #    publish("energy/grid_export_kwh", round(energy_totals["grid_export"], 6), retain=True, qos=1)
+            #    publish("energy/bat_charge_kwh", round(energy_totals["bat_charge"], 6), retain=True, qos=1)
+            #    publish("energy/bat_discharge_kwh", round(energy_totals["bat_discharge"], 6), retain=True, qos=1)
+            #    publish("energy/boiler_kwh", round(energy_totals["boiler_total"], 6), retain=True, qos=1)
                 save_energy_state()
 
         except Exception:

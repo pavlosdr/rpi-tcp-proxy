@@ -14,6 +14,7 @@ Funkce:
 MQTT:
 - base topic: <MQTT_BASE_TOPIC>
 - discovery: <DISCOVERY_PREFIX>/<domain>/<DEVICE_ID>/<object_id>/config
+- výsledné entity_id je určeno položkou `default_entity_id` v discovery payloadu
 
 Konfigurace:
 - .env (MQTT, device ID, discovery prefix, intervaly)
@@ -337,12 +338,11 @@ def _disc_topic(domain: str, object_id: str) -> str:
 
 def publish_discovery() -> None:
     dev = _disc_device()
-    # (domain, object_id, payload)
+
     entities = [
         # -------- SYSTEM --------
         ("sensor", _oid("cpu_temp"), {
             "name": f"{DEVICE_NAME} CPU teplota",
-            "object_id": _uid("cpu_temp"),
             "unique_id": _uid("cpu_temp"),
             "state_topic": mqtt_topic("sys", "cpu_temp_c"),
             "unit_of_measurement": "°C",
@@ -352,7 +352,6 @@ def publish_discovery() -> None:
         }),
         ("sensor", _oid("load_1m"), {
             "name": f"{DEVICE_NAME} Load 1m",
-            "object_id": _uid("load_1m"),
             "unique_id": _uid("load_1m"),
             "state_topic": mqtt_topic("sys", "load_1m"),
             "state_class": "measurement",
@@ -360,7 +359,6 @@ def publish_discovery() -> None:
         }),
         ("sensor", _oid("uptime"), {
             "name": f"{DEVICE_NAME} Uptime",
-            "object_id": _uid("uptime_s"),
             "unique_id": _uid("uptime_s"),
             "state_topic": mqtt_topic("sys", "uptime_s"),
             "unit_of_measurement": "s",
@@ -372,7 +370,6 @@ def publish_discovery() -> None:
         # -------- NETWORK --------
         ("binary_sensor", _oid("ping_ha_ok"), {
             "name": f"{DEVICE_NAME} Ping HA",
-            "object_id": _uid("ping_ha_ok"),
             "unique_id": _uid("ping_ha_ok"),
             "state_topic": mqtt_topic("net", "ping_ha_ok"),
             "payload_on": "1",
@@ -382,7 +379,6 @@ def publish_discovery() -> None:
         }),
         ("sensor", _oid("ping_ha_ms"), {
             "name": f"{DEVICE_NAME} Ping HA (ms)",
-            "object_id": _uid("ping_ha_ms"),
             "unique_id": _uid("ping_ha_ms"),
             "state_topic": mqtt_topic("net", "ping_ha_ms"),
             "unit_of_measurement": "ms",
@@ -392,7 +388,6 @@ def publish_discovery() -> None:
         }),
         ("binary_sensor", _oid("ping_inverter_ok"), {
             "name": f"{DEVICE_NAME} Ping Inverter",
-            "object_id": _uid("ping_inverter_ok"),
             "unique_id": _uid("ping_inverter_ok"),
             "state_topic": mqtt_topic("net", "ping_inverter_ok"),
             "payload_on": "1",
@@ -402,7 +397,6 @@ def publish_discovery() -> None:
         }),
         ("sensor", _oid("tcp_inverter_ms"), {
             "name": f"{DEVICE_NAME} TCP Inverter (ms)",
-            "object_id": _uid("tcp_inverter_ms"),
             "unique_id": _uid("tcp_inverter_ms"),
             "state_topic": mqtt_topic("net", "tcp_inverter_ms"),
             "unit_of_measurement": "ms",
@@ -414,7 +408,6 @@ def publish_discovery() -> None:
         # -------- PROXY / SYSTEMD --------
         ("binary_sensor", _oid("proxy_active"), {
             "name": f"{DEVICE_NAME} Proxy active",
-            "object_id": _uid("proxy_active"),
             "unique_id": _uid("proxy_active"),
             "state_topic": mqtt_topic("proxy", "active"),
             "payload_on": "1",
@@ -425,7 +418,6 @@ def publish_discovery() -> None:
         # -------- BRIDGE (infigy-norma) --------
         ("sensor", _oid("last_event_age"), {
             "name": f"{DEVICE_NAME} doba od poslední události",
-            "object_id": _uid("bridge_last_event_age_s"),
             "unique_id": _uid("bridge_last_event_age_s"),
             "state_topic": mqtt_topic("bridge", "last_event_age_s"),
             "unit_of_measurement": "s",
@@ -435,7 +427,6 @@ def publish_discovery() -> None:
         }),
         ("binary_sensor", _oid("bridge_online"), {
             "name": f"{DEVICE_NAME} bridge online",
-            "object_id": _uid("bridge_online"),
             "unique_id": _uid("bridge_online"),
             "state_topic": mqtt_topic("bridge", "online"),
             "payload_on": "1",
@@ -445,7 +436,6 @@ def publish_discovery() -> None:
         }),
         ("binary_sensor", _oid("ws_flow_ok"), {
             "name": f"{DEVICE_NAME} poskytuje data",
-            "object_id": _uid("ws_flow_ok"),
             "unique_id": _uid("ws_flow_ok"),
             "state_topic": mqtt_topic("bridge", "ws_flow_ok"),
             "payload_on": "1",
@@ -459,7 +449,10 @@ def publish_discovery() -> None:
     ]
 
     for domain, discovery_object_id, payload in entities:
-        # discovery topic může zůstat jako dnes (používáš _oid), jen je to "adresář" v MQTT
+        #    default_entity_id = domain + object_id
+        ent_slug = str(discovery_object_id).strip().lower()
+        payload["default_entity_id"] = f"{domain}.{ent_slug}"
+
         topic = _disc_topic(domain, discovery_object_id)
         publish_json(topic, payload, retain=True)
 
