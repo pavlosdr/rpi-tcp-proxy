@@ -32,7 +32,7 @@ import sys
 import signal
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
-from envfile import env_str, env_int, env_float
+from envfile import env_str, env_int
 
 # ---------------------- KONFIGURACE ---------------------- #
 
@@ -60,9 +60,6 @@ DISCOVERY_PREFIX = env_str("INFIGY_MQTT_DISCOVERY_PREFIX", "homeassistant").stri
 DEVICE_ID = env_str("INFIGY_MQTT_DEVICE_ID", "rpi-3b-broker") 
 DEVICE_NAME = env_str("INFIGY_MQTT_DEVICE_NAME","Raspberry 3B broker")
 ENTITY_PREFIX = env_str("INFIGY_MQTT_ENTITY_PREFIX", "rpi_broker_infigy")
-ENERGY_STATE_PATH = env_str("INFIGY_ENERGY_STATE_PATH", os.path.join(BASE_DIR, "energy_state.json"))
-ENERGY_PUBLISH_INTERVAL_S = env_int("INFIGY_ENERGY_PUBLISH_INTERVAL_S", 30)
-INTEGRATOR_TICK_S = env_float("INFIGY_INTEGRATOR_TICK_S", 5.0)
 HEARTBEAT_MAX_AGE_S = env_int("INFIGY_HEARTBEAT_MAX_AGE_S", 180)
 
 # ---------------------- Logging ---------------------------
@@ -96,28 +93,6 @@ try:
 except OSError:
     logger.warning("Another infigy_ws_to_mqtt instance is running. Exiting.")
     sys.exit(1)
-
-# aktuální výkonové hodnoty (W) pro integrátor
-current_power = {
-"home": 0.0,
-"pv": 0.0,
-"grid_import": 0.0, # >0 = beru ze sítě
-"grid_export": 0.0, # >0 = posílám do sítě
-"bat_charge": 0.0, # >0 = nabíjím z/do sítě/FVE
-"bat_discharge": 0.0, # >0 = vybíjím do domu/sítě
-"boiler_total": 0.0
-}
-
-# integrované energie (kWh)
-energy_totals = {
-"home": 0.0,
-"pv": 0.0,
-"grid_import": 0.0,
-"grid_export": 0.0,
-"bat_charge": 0.0,
-"bat_discharge": 0.0,
-"boiler_total": 0.0
-}
 
 # ------------------------ MQTT helpers---------------------- #
 def mqtt_topic(*parts: str) -> str:
@@ -164,34 +139,16 @@ def publish(topic_suffix, payload, retain=True, qos=1):
         logger.exception("MQTT publish failed topic=%s", topic)    
 
 
-def load_energy_state():
-    try:
-        with open(ENERGY_STATE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                energy_totals.update({k: float(v) for k, v in data.items() if k in energy_totals})
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        logger.exception("ENERGY STATE load error path=%s", ENERGY_STATE_PATH)
-
-def save_energy_state():
-    try:
-        tmp_path = ENERGY_STATE_PATH + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(energy_totals, f, ensure_ascii=False)
-        os.replace(tmp_path, ENERGY_STATE_PATH)
-    except Exception as e:
-        logger.exception("ENERGY STATE save error path=%s", ENERGY_STATE_PATH)
-
+###############################################################
+# HELPERY PRO SELEKTIVNÍ VÝPIS PAYLOADU DO LOGU >>> pro vývoj
 ###############################################################
 TOTAL_EXCLUDE_PATTERNS = [
-    "PV_SURPLUS_ENERGY_PERC_TOTAL.0",        # procenta
+    "PV_SURPLUS_ENERGY_PERC_TOTAL.0", 
     "PV_SURPLUS_ENERGY_PERC_TOTAL.1",
     "PV_SURPLUS_ENERGY_PERC_TOTAL.2",
-    "SURPLUS_INFO_TOTAL",     # prebytky / info
-    "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.0",        # metadata
-    "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.1",       # fazove hodnoty
+    "SURPLUS_INFO_TOTAL",    
+    "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.0", 
+    "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.1", 
     "NEW_EM_ENERGY_CONSUMED_PHASE_TOTAL.2",  
     "NEW_EM_ENERGY_CONSUMED_TOTAL",
     "NEW_PV_BATTERY_DISCHARGE_POWER_TOTAL.",
@@ -231,11 +188,9 @@ def _is_excluded_total(full_key: str) -> bool:
     for pat in TOTAL_EXCLUDE_PATTERNS:
         if pat in fk:
             return True
-
     # vylouceni fazovych indexu .0 .1 .2
     #if fk.endswith((".0", ".1", ".2")):
     #    return True
-
     return False
 
 def log_total_keys(payload: dict, prefix: str = "") -> None:
@@ -248,22 +203,16 @@ def log_total_keys(payload: dict, prefix: str = "") -> None:
 
     for key, value in payload.items():
         full_key = f"{prefix}.{key}" if prefix else key
-        key_upper = key.upper()
-
-        
         if not _is_excluded_total(full_key):
             logger.debug(
                 "INFIGY TOTAL: %s = %s",
                 full_key,
                 value,
             )
-
         if isinstance(value, dict):
             log_total_keys(value, full_key)
-
-
 ###############################################################
-
+###############################################################
 # ----------------------- MQTT Discovery -------------------- #
 def _disc_topic(domain: str, object_id: str) -> str:
     return f"{DISCOVERY_PREFIX}/{domain}/{DEVICE_ID}/{object_id}/config"
@@ -508,7 +457,6 @@ def publish_discovery():
 
     logger.info("HA discovery published (%s entities)", len(entities))
 
-
 # ---------------------- MQTT callbacks --------------------- #
 # v2 i v1 kompatibilní on_connect - zamezí error v rozdílném počtu parametrů
 def _normalize_code(raw):
@@ -616,7 +564,6 @@ def on_store_change(data):
             publish("boiler/power_w/phase3", round(p3, 1), qos=0)
             total_w = round(p1 + p2 + p3, 1)
             publish("boiler/power_w/total", total_w, qos=0)
-            current_power["boiler_total"] = float(total_w)
 
         # Stavové příznaky
         if "Status" in hw_info:
@@ -630,27 +577,16 @@ def on_store_change(data):
         if "PV_ACTUAL_SOC" in payload:
             publish("battery/soc", round(float(payload["PV_ACTUAL_SOC"]), 1), qos=1)
 
-        # Bonus metriky
+        # Metriky
         if "PV_ACTUAL_POWER" in payload:           # kW
             pv_w = round(kw_to_w(payload["PV_ACTUAL_POWER"]), 1)
             publish("pv/power_w", pv_w, qos=0)
-            current_power["pv"] = float(pv_w)
         if "PV_ACTUAL_POWER_BATTERY" in payload:   # kW (kladné = charge, záporné = discharge)
             bat_w = round(kw_to_w(payload["PV_ACTUAL_POWER_BATTERY"]), 1)
             publish("battery/power_w", bat_w, qos=0)
-            # rozdělení na charge/discharge
-            current_power["bat_charge"] = max(0.0, float(bat_w))
-            current_power["bat_discharge"] = max(0.0, -float(bat_w))
         if "SURPLUS_INFO_TOTAL" in payload:        # kW (+ export, - import) >>> přepočet na W
             s_kw = round(float(payload["SURPLUS_INFO_TOTAL"]), 4)
             publish("grid/surplus_total_w", int(round(kw_to_w(s_kw))), qos=0)
-            # odvoď import/export ve W
-            if s_kw >= 0:
-                current_power["grid_export"] = float(s_kw) * 1000.0
-                current_power["grid_import"] = 0.0
-            else:
-                current_power["grid_import"] = float(-s_kw) * 1000.0
-                current_power["grid_export"] = 0.0
 
         # Dům – po fázích (pokud Infigy posílá) (kW -> W)
         if "EM_INFO_Consumption" in payload:
@@ -662,11 +598,10 @@ def on_store_change(data):
                 publish("home/power_w/phase2", round(kw_to_w(em[1]), 1), qos=0)
                 publish("home/power_w/phase3", round(kw_to_w(em[2]), 1), qos=0)
                 publish("home/power_w/total", tot_w, qos=0)
-                current_power["home"] = float(tot_w)
 
     #   diagnostické poslání vstupních dat osekaný na délku 800 znaků
-    #    logger.debug("INFIGY payload: %s", payload)
-        log_total_keys(payload)
+    #   logger.debug("INFIGY payload: %s", payload)
+    #   log_total_keys(payload)
     #   publish("debug/last_payload", json.dumps(payload)[:800])  # omezíme délku
     #   diagnostické poslání "1" bez prefixu MQTT_BASE_TOPIC pro lepší ladění
     #   mqttc.publish("zzz_stream", "1", qos=0, retain=False)  # každá zpráva = tichý impulz
@@ -758,64 +693,6 @@ def _mqtt_watchdog_loop(stop_evt: threading.Event):
             if stop_evt.wait(float(MQTT_WATCHDOG_INTERVAL_S)):
                 break
 
-# --- integrátor energií (trapézová aproximace) ---
-def energy_integrator(stop_evt: threading.Event):
-    logger.info(
-        "Energy integrator started tick=%ss publish_interval=%ss state=%s",
-        INTEGRATOR_TICK_S, ENERGY_PUBLISH_INTERVAL_S, ENERGY_STATE_PATH
-    )
-    load_energy_state()
-
-    last_t = time.monotonic()
-    last_p = current_power.copy()  # W
-    pub_timer = 0.0
-
-    tick_s = float(INTEGRATOR_TICK_S)
-    pub_interval_s = float(ENERGY_PUBLISH_INTERVAL_S)
-
-    while not stop_evt.is_set():
-        try:
-            # místo time.sleep(INTEGRATOR_TICK_S)
-            if stop_evt.wait(tick_s):
-                break
-
-            now = time.monotonic()
-            dt_s = now - last_t  # seconds
-            if dt_s <= 0:
-                last_t = now
-                continue
-
-            # trapézová integrace pro každý kanál
-            for key, p_curr in current_power.items():
-                p_prev = float(last_p.get(key, 0.0))
-                wh = (p_prev + float(p_curr)) / 2.0 * (dt_s / 3600.0)  # Wh
-                kwh = wh / 1000.0
-                if kwh > 0:
-                    energy_totals[key] = float(energy_totals.get(key, 0.0)) + kwh
-
-            # posun stavů
-            last_p = current_power.copy()
-            last_t = now
-
-            # periodické publikování a persist
-            pub_timer += dt_s
-            if pub_timer >= pub_interval_s:
-                pub_timer = 0.0
-            #    publish("energy/home_kwh", round(energy_totals["home"], 6), retain=True, qos=1)
-            #    publish("energy/pv_kwh", round(energy_totals["pv"], 6), retain=True, qos=1)
-            #    publish("energy/grid_import_kwh", round(energy_totals["grid_import"], 6), retain=True, qos=1)
-            #    publish("energy/grid_export_kwh", round(energy_totals["grid_export"], 6), retain=True, qos=1)
-            #    publish("energy/bat_charge_kwh", round(energy_totals["bat_charge"], 6), retain=True, qos=1)
-            #    publish("energy/bat_discharge_kwh", round(energy_totals["bat_discharge"], 6), retain=True, qos=1)
-            #    publish("energy/boiler_kwh", round(energy_totals["boiler_total"], 6), retain=True, qos=1)
-                save_energy_state()
-
-        except Exception:
-            logger.exception("ENERGY integrator error")
-            # místo time.sleep(2) -> přerušitelné stop_evt
-            if stop_evt.wait(2.0):
-                break
-
 # --- connect options for Socket.IO ---
 EXTRA_HEADERS = {}
 if AUTH_COOKIE:
@@ -875,13 +752,6 @@ def main():
         target=publish_heartbeat,
         args=(stop_evt,),
         name="heartbeat",
-        daemon=True,
-    ).start()
-
-    threading.Thread(
-        target=energy_integrator,
-        args=(stop_evt,),
-        name="energy-integrator",
         daemon=True,
     ).start()
 

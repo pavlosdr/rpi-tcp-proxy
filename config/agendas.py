@@ -269,7 +269,6 @@ AGENDAS = {
             {"id": "auth",   "label": "Auth"},
             {"id": "timing", "label": "Timing"},
             {"id": "logging", "label": "Logging"},
-            {"id": "path", "label": "Cesty"},
             {"id": "other",  "label": "Ostatni"},
         ],
 
@@ -286,17 +285,14 @@ AGENDAS = {
             "tooltip": "Cilovy host a lokalni socket (pokud se pouziva)."},
             {"id": "auth_main", "tab": "auth", "label": "Autentizace",
             "tooltip": "Cookie/Bearer pro pristup. Pouzij jen jednu metodu, podle implementace sluzby."},
-            {"id": "timing_main", "tab": "timing", "label": "Casovani a heartbeat",
-            "tooltip": "Intervaly publikovani, tick integratoru a heartbeat age."},
+            {"id": "timing_main", "tab": "timing", "label": "Heartbeat",
+            "tooltip": "Heartbeat age."},
             {"id": "log_main",    "tab": "logging", "label": "Logování",
             "tooltip": "Nastavení logu - úroveň"},
             {"id": "other_auto", "tab": "other", "label": "Ostatni (detekovano)",
             "description": "Automaticky detekované klíče INFIGY_* z .env, které nejsou explicitně v konfiguraci (read-only)."},
             {"id": "ha_pub", "tab": "mqtt", "label": "Publikovaní entit do HA",
              "tooltip": "Home Assistant MQTT Discovery.",},
-            {"id": "path_main", "tab": "path", "label": "Metadata / Cesty",
-            "tooltip": "Verze a cesty pro energy state (podle implementace služby)."},
-
         ],
 
         "fields": [
@@ -367,20 +363,9 @@ AGENDAS = {
             "type": "secret", "required": False,
             "tooltip": "Bearer token pro autentizaci (pokud sluzba pouziva token auth)."},
 
-            # Metadata / paths
-            {"key": "INFIGY_ENERGY_STATE_PATH", "label": "Energy state path", "tab": "path", "section": "path_main",
-            "type": "str", "required": False, "placeholder": "/energy/state",
-            "tooltip": "Cesta/endpoint pro zdroj energy state (dle implementace sluzby)."},
-
             # -----------------
             # TIMING
             # -----------------
-            {"key": "INFIGY_ENERGY_PUBLISH_INTERVAL_S", "label": "Publish interval (s)", "tab": "timing", "section": "timing_main",
-            "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "5",
-            "tooltip": "Jak casto publikovat energy hodnoty do MQTT (sekundy)."},
-            {"key": "INFIGY_INTEGRATOR_TICK_S", "label": "Integrator tick (s)", "tab": "timing", "section": "timing_main",
-            "type": "int", "required": True, "min": 1, "max": 3600, "placeholder": "1",
-            "tooltip": "Krok integratoru (sekundy)."},
             {"key": "INFIGY_HEARTBEAT_MAX_AGE_S", "label": "Heartbeat max age (s)", "tab": "timing", "section": "timing_main",
             "type": "int", "required": True, "min": 1, "max": 86400, "placeholder": "30",
             "tooltip": "Maximalni stari heartbeat, po kterem se bere spojeni jako neaktualni (sekundy)."},
