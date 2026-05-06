@@ -5,21 +5,28 @@ Služba publikuje systémové a síťové informace Raspberry Pi do MQTT
 a integruje je do Home Assistantu pomocí MQTT Discovery.
 
 Funkce:
-- Stav zařízení (online/offline)
-- CPU teplota, load, uptime
-- Síťová latence (ping, TCP testy)
-- Stav proxy / dalších služeb
-- Heartbeat a watchdog logika
+- Stav zařízení (online/offline, heartbeat, watchdog)
+- CPU metriky (teplota, load 1/5/15 min, uptime)
+- Napájení a throttling (undervoltage, throttling now/past, raw stav)
+- Síťová diagnostika (ping HA, ping + TCP inverter)
+- Stav proxy služby (systemd unit)
+- Publikace pouze při změně hodnot (optimalizace provozu)
+- Retained hodnoty pro rychlý start Home Assistantu
+
+Optimalizace:
+- publish pouze při změně hodnot (nižší traffic, menší riziko zahlcení)
+- oddělené workery (sys / net / proxy / heartbeat)
 
 MQTT:
-- base topic: <MQTT_BASE_TOPIC>
+- base topic: <MQTT_BASE_TOPIC> (např. report_rpi)
+- struktura: <base>/<section>/<metric>
 - discovery: <DISCOVERY_PREFIX>/<domain>/<DEVICE_ID>/<object_id>/config
 - výsledné entity_id je určeno položkou `default_entity_id` v discovery payloadu
 
 Konfigurace:
-- .env (MQTT, device ID, discovery prefix, intervaly)
+- .env (MQTT, device ID, discovery prefix, intervaly, cílové hosty)
 
-Určeno pro běh jako systemd service.
+Určeno pro běh jako systemd service (např. rpi-mqtt-report.service).
 """
 
 import os
@@ -73,12 +80,14 @@ PING_INVERTER_HOST = env_str("MQTT_REPORT_PING_INVERTER_HOST", INVERTER_HOST)
 
 PROXY_SYSTEMD_UNIT = env_str("MQTT_REPORT_PROXY_SYSTEMD_UNIT","modbus_tcp_proxy.service")
 
-POLL_SYS_S    = env_int("MQTT_REPORT_POLL_SYS_S",10)
-POLL_NET_S    = env_int("MQTT_REPORT_POLL_NET_S",10)
-POLL_PROXY_S  = env_int("MQTT_REPORT_POLL_PROXY_S",10)
+POLL_SYS_S    = env_int("MQTT_REPORT_POLL_SYS_S",60)
+POLL_NET_S    = env_int("MQTT_REPORT_POLL_NET_S",30)
+POLL_PROXY_S  = env_int("MQTT_REPORT_POLL_PROXY_S",20)
 
-HEARTBEAT_S   = env_int("MQTT_REPORT_HEARTBEAT_S",20)
+HEARTBEAT_S   = env_int("MQTT_REPORT_HEARTBEAT_S",30)
 MAX_AGE_OK_S  = env_int("MQTT_REPORT_MAX_AGE_OK_S",60)
+
+FORCE_PUBLISH_S = 300  # každých 5 min obnovit i beze změny
 # ---------------------- Logging ---------------------------
 # Log minimization
 LOG_LEVEL = getattr(logging, env_str("MQTT_REPORT_LOG_LEVEL", "INFO").upper(), logging.INFO)
@@ -110,6 +119,8 @@ stop_evt = threading.Event()
 mqtt_connected_evt = threading.Event()
 mqtt_client_lock = threading.Lock()
 mqtt_client = None  # type: ignore
+
+_last_published = {}
 
 # "event" = úspěšný publish cyklus
 last_event_ts_lock = threading.Lock()
@@ -275,7 +286,35 @@ def read_uptime_s() -> Optional[int]:
     except Exception:
         return None
 
+def read_throttled():
+    try:
+        out = subprocess.check_output(
+            ["vcgencmd", "get_throttled"],
+            text=True,
+            timeout=2
+        ).strip()
 
+        raw_hex = out.split("=")[1]
+        value = int(raw_hex, 16)
+
+        return {
+            "throttled_raw": raw_hex,
+            "undervoltage_now": int(bool(value & 0x1)),
+            "throttled_now": int(bool(value & 0x4)),
+            "undervoltage_past": int(bool(value & 0x10000)),
+            "throttled_past": int(bool(value & 0x40000)),
+        }
+
+    except Exception:
+        logger.exception("read_throttled error")
+        return {
+            "throttled_raw": "unknown",
+            "undervoltage_now": 0,
+            "throttled_now": 0,
+            "undervoltage_past": 0,
+            "throttled_past": 0,
+        }
+    
 # ------------------ MQTT publish helpers ------------------ #
 def _mqtt_publish(topic: str, payload: str, retain: bool = True, qos: int = 0) -> None:
     global mqtt_client
@@ -294,6 +333,41 @@ def publish_num(topic: str, value: Any, retain: bool = True) -> None:
 def publish_text(topic: str, value: str, retain: bool = True) -> None:
     _mqtt_publish(topic, str(value), retain=retain, qos=0)
 
+def _should_publish(topic, value, tolerance=None, force_after_s=FORCE_PUBLISH_S):
+    now = time.time()
+    old = _last_published.get(topic)
+
+    if old is None:
+        _last_published[topic] = (value, now)
+        return True
+
+    old_value, old_ts = old
+
+    changed = False
+
+    if tolerance is not None:
+        try:
+            changed = abs(float(value) - float(old_value)) >= tolerance
+        except (TypeError, ValueError):
+            changed = value != old_value
+    else:
+        changed = value != old_value
+
+    forced = (now - old_ts) >= force_after_s
+
+    if changed or forced:
+        _last_published[topic] = (value, now)
+        return True
+
+    return False
+
+def publish_num_if_changed(topic, value, retain=True, tolerance=0.1):
+    if _should_publish(topic, value, tolerance=tolerance):
+        publish_num(topic, value, retain=retain)
+
+def publish_text_if_changed(topic, value, retain=True):
+    if _should_publish(topic, value, tolerance=None):
+        publish_text(topic, value, retain=retain)
 
 def publish_json(topic: str, obj: Any, retain: bool = True) -> None:
     _mqtt_publish(topic, json.dumps(obj, ensure_ascii=False), retain=retain, qos=0)
@@ -357,6 +431,20 @@ def publish_discovery() -> None:
             "state_class": "measurement",
             "device": dev,
         }),
+        ("sensor", _oid("load_5m"), {
+            "name": f"{DEVICE_NAME} Load 5m",
+            "unique_id": _uid("load_5m"),
+            "state_topic": mqtt_topic("sys", "load_5m"),
+            "state_class": "measurement",
+            "device": dev,
+        }),
+        ("sensor", _oid("load_15m"), {
+            "name": f"{DEVICE_NAME} Load 15m",
+            "unique_id": _uid("load_15m"),
+            "state_topic": mqtt_topic("sys", "load_15m"),
+            "state_class": "measurement",
+            "device": dev,
+        }),
         ("sensor", _oid("uptime"), {
             "name": f"{DEVICE_NAME} Uptime",
             "unique_id": _uid("uptime_s"),
@@ -364,6 +452,59 @@ def publish_discovery() -> None:
             "unit_of_measurement": "s",
             "device_class": "duration",
             "state_class": "measurement",
+            "device": dev,
+        }),
+
+        ("sensor", _oid("throttled_raw"), {
+            "name": f"{DEVICE_NAME} Throttled raw",
+            "unique_id": _uid("throttled_raw"),
+            "state_topic": mqtt_topic("sys", "throttled_raw"),
+            "icon": "mdi:raspberry-pi",
+            "entity_category": "diagnostic",
+            "device": dev,
+        }),
+
+        ("binary_sensor", _oid("undervoltage_now"), {
+            "name": f"{DEVICE_NAME} Undervoltage now",
+            "unique_id": _uid("undervoltage_now"),
+            "state_topic": mqtt_topic("sys", "undervoltage_now"),
+            "payload_on": "1",
+            "payload_off": "0",
+            "device_class": "problem",
+            "entity_category": "diagnostic",
+            "device": dev,
+        }),
+
+        ("binary_sensor", _oid("throttled_now"), {
+            "name": f"{DEVICE_NAME} Throttling now",
+            "unique_id": _uid("throttled_now"),
+            "state_topic": mqtt_topic("sys", "throttled_now"),
+            "payload_on": "1",
+            "payload_off": "0",
+            "device_class": "problem",
+            "entity_category": "diagnostic",
+            "device": dev,
+        }),
+
+        ("binary_sensor", _oid("undervoltage_past"), {
+            "name": f"{DEVICE_NAME} Undervoltage past",
+            "unique_id": _uid("undervoltage_past"),
+            "state_topic": mqtt_topic("sys", "undervoltage_past"),
+            "payload_on": "1",
+            "payload_off": "0",
+            "device_class": "problem",
+            "entity_category": "diagnostic",
+            "device": dev,
+        }),
+
+        ("binary_sensor", _oid("throttled_past"), {
+            "name": f"{DEVICE_NAME} Throttling past",
+            "unique_id": _uid("throttled_past"),
+            "state_topic": mqtt_topic("sys", "throttled_past"),
+            "payload_on": "1",
+            "payload_off": "0",
+            "device_class": "problem",
+            "entity_category": "diagnostic",
             "device": dev,
         }),
 
@@ -404,7 +545,15 @@ def publish_discovery() -> None:
             "state_class": "measurement",
             "device": dev,
         }),
-
+        ("sensor", _oid("ping_inverter_ms"), {
+            "name": f"{DEVICE_NAME} Ping Inverter (ms)",
+            "unique_id": _uid("ping_inverter_ms"),
+            "state_topic": mqtt_topic("net", "ping_inverter_ms"),
+            "unit_of_measurement": "ms",
+            "device_class": "duration",
+            "state_class": "measurement",
+            "device": dev,
+        }),
         # -------- PROXY / SYSTEMD --------
         ("binary_sensor", _oid("proxy_active"), {
             "name": f"{DEVICE_NAME} Proxy active",
@@ -483,8 +632,9 @@ def _rc_int(reason_code) -> int:
     # Poslední možnost: vrať nenulové (neznámé) -> chovej se jako failure
     return 1
 
-def on_connect(client, userdata, flags, reason_code, properties=None):
+def on_connect(client, userdata, flags, reason_code=None, properties=None, *args):
     rc = _rc_int(reason_code)
+
     if rc == 0:
         mqtt_connected_evt.set()
         logger.info("MQTT connected rc=%s", rc)
@@ -498,20 +648,30 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
         except Exception:
             logger.exception("publish_discovery failed")
 
-        # po connectu rovnou publish aktuálních metrik (pokud máme)
+        # po connectu rovnou publish aktuálních metrik
         try:
             publish_metrics()
         except Exception:
             logger.exception("publish_metrics after connect failed")
+
     else:
         mqtt_connected_evt.clear()
         logger.warning("MQTT connect failed rc=%s reason=%s", rc, reason_code)
 
-
-def on_disconnect(client, userdata, reason_code, properties=None):
-    rc = _rc_int(reason_code)
+def on_disconnect(client, userdata, *args):
     mqtt_connected_evt.clear()
-    logger.warning("MQTT disconnected rc=%s reason=%s", rc, reason_code)
+
+    reason_code = None
+    properties = None
+
+    if len(args) == 1:
+        reason_code = args[0]
+    elif len(args) >= 2:
+        reason_code = args[0]
+        properties = args[1]
+
+    logger.warning("MQTT disconnected reason_code=%s properties=%s", reason_code, properties)
+
 
 
 def create_mqtt_client() -> mqtt.Client:
@@ -532,11 +692,13 @@ def create_mqtt_client() -> mqtt.Client:
     client.will_set(mqtt_topic("bridge", "online"), payload="0", qos=0, retain=True)
 
     # callbacks (API v2)
-    def on_connect_v2(client, userdata, flags, reason_code, properties=None):
+    def on_connect_v2(client, userdata, flags, *args):
+        reason_code = args[0] if len(args) >= 1 else 0
+        properties = args[1] if len(args) >= 2 else None
         return on_connect(client, userdata, flags, reason_code, properties)
 
-    def on_disconnect_v2(client, userdata, reason_code, properties=None):
-        return on_disconnect(client, userdata, reason_code, properties)
+    def on_disconnect_v2(client, userdata, *args):
+        return on_disconnect(client, userdata, *args)
 
     client.on_connect = on_connect_v2
     client.on_disconnect = on_disconnect_v2
@@ -605,6 +767,7 @@ def worker_sys():
             cpu_t = read_cpu_temp_c()
             l1, l5, l15 = read_loadavg()
             up = read_uptime_s()
+            thr = read_throttled()
 
             with state_lock:
                 state["sys"] = {
@@ -613,6 +776,13 @@ def worker_sys():
                     "load_5m": l5,
                     "load_15m": l15,
                     "uptime_s": up,
+
+                    "throttled_raw": thr["throttled_raw"],
+                    "undervoltage_now": thr["undervoltage_now"],
+                    "throttled_now": thr["throttled_now"],
+                    "undervoltage_past": thr["undervoltage_past"],
+                    "throttled_past": thr["throttled_past"],
+
                     "ts": now_iso(),
                 }
         except Exception:
@@ -673,27 +843,33 @@ def publish_metrics() -> None:
         proxy_s = dict(state.get("proxy") or {})
 
     # SYSTEM
-    publish_num(mqtt_topic("sys", "cpu_temp_c"), sys_s.get("cpu_temp_c"), retain=True)
-    publish_num(mqtt_topic("sys", "load_1m"), sys_s.get("load_1m"), retain=True)
-    publish_num(mqtt_topic("sys", "load_5m"), sys_s.get("load_5m"), retain=True)
-    publish_num(mqtt_topic("sys", "load_15m"), sys_s.get("load_15m"), retain=True)
-    publish_num(mqtt_topic("sys", "uptime_s"), sys_s.get("uptime_s"), retain=True)
+    publish_num_if_changed(mqtt_topic("sys", "cpu_temp_c"), sys_s["cpu_temp_c"], tolerance=0.5)
+    publish_num_if_changed(mqtt_topic("sys", "load_1m"), sys_s["load_1m"], tolerance=0.05)
+    publish_num_if_changed(mqtt_topic("sys", "load_5m"), sys_s["load_5m"], tolerance=0.05)
+    publish_num_if_changed(mqtt_topic("sys", "load_15m"), sys_s["load_15m"], tolerance=0.05)
+    publish_num_if_changed(mqtt_topic("sys", "uptime_s"), sys_s["uptime_s"], tolerance=300)
+    publish_text_if_changed(mqtt_topic("sys", "throttled_raw"), sys_s.get("throttled_raw", "unknown"), retain=True)
+
+    publish_num_if_changed(mqtt_topic("sys", "undervoltage_now"), sys_s.get("undervoltage_now", 0), retain=True, tolerance=1)
+    publish_num_if_changed(mqtt_topic("sys", "throttled_now"), sys_s.get("throttled_now", 0), retain=True, tolerance=1)
+    publish_num_if_changed(mqtt_topic("sys", "undervoltage_past"), sys_s.get("undervoltage_past", 0), retain=True, tolerance=1)
+    publish_num_if_changed(mqtt_topic("sys", "throttled_past"), sys_s.get("throttled_past", 0), retain=True, tolerance=1)
 
     # NETWORK
-    publish_text(mqtt_topic("net", "ping_ha_ok"), str(int(net_s.get("ping_ha_ok", 0))), retain=True)
-    publish_num(mqtt_topic("net", "ping_ha_ms"), net_s.get("ping_ha_ms"), retain=True)
+    publish_num_if_changed(mqtt_topic("net", "ping_ha_ok"), net_s["ping_ha_ok"], tolerance=1)
+    publish_num_if_changed(mqtt_topic("net", "ping_inverter_ok"), net_s["ping_inverter_ok"], tolerance=1)
+    publish_num_if_changed(mqtt_topic("net", "tcp_inverter_ok"), net_s["tcp_inverter_ok"], tolerance=1)
 
-    publish_text(mqtt_topic("net", "ping_inverter_ok"), str(int(net_s.get("ping_inverter_ok", 0))), retain=True)
-    publish_num(mqtt_topic("net", "ping_inverter_ms"), net_s.get("ping_inverter_ms"), retain=True)
-
-    publish_text(mqtt_topic("net", "tcp_inverter_ok"), str(int(net_s.get("tcp_inverter_ok", 0))), retain=True)
-    publish_num(mqtt_topic("net", "tcp_inverter_ms"), net_s.get("tcp_inverter_ms"), retain=True)
+    publish_num_if_changed(mqtt_topic("net", "ping_ha_ms"), net_s["ping_ha_ms"], tolerance=2.0)
+    publish_num_if_changed(mqtt_topic("net", "ping_inverter_ms"), net_s["ping_inverter_ms"], tolerance=5.0)
+    publish_num_if_changed(mqtt_topic("net", "tcp_inverter_ms"), net_s["tcp_inverter_ms"], tolerance=5.0)
 
     # PROXY
-    publish_text(mqtt_topic("proxy", "active"), str(int(proxy_s.get("active", 0))), retain=True)
+    publish_num_if_changed(mqtt_topic("proxy", "active"), proxy_s["active"], tolerance=1)
+    publish_text_if_changed(mqtt_topic("proxy", "state"), proxy_s["state"])
 
-    # volitelně i detail state do JSON (pomáhá při ladění)
-    publish_json(mqtt_topic("report", "snapshot"), {"sys": sys_s, "net": net_s, "proxy": proxy_s}, retain=True)
+    # volitelně i detail state do JSON (pomáhá při ladění) >>> zbytečně zatěžuje payload
+    # publish_json(mqtt_topic("report", "snapshot"), {"sys": sys_s, "net": net_s, "proxy": proxy_s}, retain=True)
 
     # "event" = úspěšný publish
     set_last_event_now()
@@ -710,29 +886,30 @@ def worker_publish_loop():
 
 def worker_heartbeat():
     """
-    Heartbeat + watchdog (infigy-norma):
-      - bridge/online (už drží LWT + při connectu nastavíme 1)
-      - bridge/heartbeat_ts (jen informativně)
-      - bridge/last_event_age_s
-      - bridge/ws_flow_ok
+    Heartbeat + watchdog:
+      - bridge/heartbeat_ts se publikuje vždy
+      - bridge/last_event_age_s jen při změně / po FORCE_PUBLISH_S
+      - bridge/ws_flow_ok jen při změně / po FORCE_PUBLISH_S
     """
     while not stop_evt.is_set():
         try:
             if mqtt_connected_evt.is_set():
+                # Heartbeat necháme publikovat vždy
                 publish_num(mqtt_topic("bridge", "heartbeat_ts"), int(time.time()), retain=True)
 
                 age = get_last_event_age_s()
+
                 if age is None:
-                    # ještě žádný event
-                    publish_num(mqtt_topic("bridge", "last_event_age_s"), -1, retain=True)
-                    publish_text(mqtt_topic("bridge", "ws_flow_ok"), "0", retain=True)
+                    publish_num_if_changed(mqtt_topic("bridge", "last_event_age_s"), -1, retain=True, tolerance=1)
+                    publish_text_if_changed(mqtt_topic("bridge", "ws_flow_ok"), "0", retain=True)
                 else:
-                    publish_num(mqtt_topic("bridge", "last_event_age_s"), int(age), retain=True)
-                    publish_text(mqtt_topic("bridge", "ws_flow_ok"), str(int(ws_flow_ok())), retain=True)
+                    publish_num_if_changed(mqtt_topic("bridge", "last_event_age_s"), int(age), retain=True, tolerance=10)
+                    publish_text_if_changed(mqtt_topic("bridge", "ws_flow_ok"), str(int(ws_flow_ok())), retain=True)
+
         except Exception:
             logger.exception("heartbeat error")
-        stop_evt.wait(float(max(1, HEARTBEAT_S)))
 
+        stop_evt.wait(float(max(1, HEARTBEAT_S)))
 
 # ------------------ Shutdown handling ------------------ #
 def handle_stop(signum=None, frame=None):
